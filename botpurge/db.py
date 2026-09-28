@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS msg_items (
     at TEXT,
     context TEXT,                                   -- post/video id, live stream id, or email subject
     score REAL, label TEXT, reasons_json TEXT,
+    extra_json TEXT,                                -- email headers and links
     imported_at TEXT NOT NULL,
     PRIMARY KEY (user_id, id)
 );

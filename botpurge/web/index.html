@@ -40,6 +40,7 @@
     <nav class="tabs" id="tabs">
       <button data-tab="dash" class="on">Dashboard</button>
       <button data-tab="flags">Flagged accounts</button>
+      <button data-tab="inbox">Inbox &amp; email</button>
       <button data-tab="queue">Removal queue</button>
       <button data-tab="howto">Removal steps</button>
       <button data-tab="log">History &amp; undo</button>
@@ -111,7 +112,7 @@
           <span style="flex:1"></span>
           <button class="primary" id="removeSel" disabled>Remove selected</button>
         </div>
-        <div class="table-wrap"><table>
+        <div class="table-wrap"><table class="stack">
           <thead><tr><th></th><th>Account</th><th>Score</th><th>Why</th><th class="hide-sm">Connected</th><th></th></tr></thead>
           <tbody id="flagRows"></tbody>
         </table></div>
@@ -152,6 +153,43 @@
           <select id="logEvent"><option value="">All events</option><option value="removed">Removed</option><option value="failed">Failed</option><option value="flagged">Flagged</option><option value="whitelisted">Whitelisted</option><option value="readded">Re-added</option></select></div>
         <p class="small muted">Removed someone by mistake? Open their profile, add them back, then press “I re-added them” so they're never flagged again.</p>
         <div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th><th>Account</th><th class="hide-sm">Platform</th><th></th></tr></thead><tbody id="logRows"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- Inbox, comments, live chat, email -->
+    <div data-view="inbox" class="hidden">
+      <div class="panel">
+        <h2>Scan your messages, comments and email</h2>
+        <p class="small muted">Bots and scammers show themselves by how they write and act: emoji codes like [tearsofjoy], pushing you to another app, the same line over and over, links, and scam pressure in email. We judge behaviour only, never anyone's opinions.</p>
+        <div class="row">
+          <select id="mSource"><option value="tiktok">TikTok DMs (data export)</option><option value="instagram">Instagram DMs (data export)</option>
+            <option value="facebook">Facebook Messenger (data export)</option><option value="x">X DMs (archive)</option>
+            <option value="email">Email (.mbox or .eml)</option><option value="csv">Comments / chat (CSV)</option></select>
+          <input type="file" id="mFile" accept=".zip,.json,.js,.mbox,.eml,.csv">
+          <button class="primary" id="mImport">Scan</button>
+        </div>
+        <p class="small muted">Gmail: takeout.google.com → Mail → .mbox. Outlook/Apple Mail: drag messages out as .eml, or export a mailbox.</p>
+        <h3>Paste comments or live chat</h3>
+        <p class="small muted">Data exports don't include comments on your posts or live chat. Copy them from the app and paste them here, one per line as <code>handle: message</code>.</p>
+        <div class="row">
+          <select id="pPlatform"><option value="tiktok">TikTok</option><option value="instagram">Instagram</option><option value="facebook">Facebook</option><option value="x">X</option><option value="youtube">YouTube</option><option value="twitch">Twitch</option></select>
+          <select id="pKind"><option value="comment">Comments</option><option value="live">Live chat</option><option value="dm">DMs</option></select>
+          <input id="pContext" placeholder="Which post or live (optional)">
+        </div>
+        <textarea id="pText" placeholder="luna_x93: Hi dear [smile] check my bio&#10;nana_b: Making this tonight!"></textarea>
+        <div class="row end"><button class="primary" id="pGo">Scan pasted messages</button></div>
+      </div>
+      <div class="panel">
+        <div class="row"><h2 style="margin:0">Flagged senders</h2><span style="flex:1"></span>
+          <select id="sTab"><option value="flagged">Flagged</option><option value="whitelisted">Real people</option><option value="removed">Blocked / removed</option><option value="all">Everyone</option></select></div>
+        <div class="table-wrap"><table class="stack"><thead><tr><th>Sender</th><th>Score</th><th>Why</th><th class="hide-sm">Messages</th><th></th></tr></thead><tbody id="sRows"></tbody></table></div>
+        <div id="sDetail"></div>
+      </div>
+      <div class="panel">
+        <h2>Canary traps: catch AI comment bots</h2>
+        <p class="small muted">AI bots read your post and follow any instruction in it. People skip nonsense. Put a canary instruction in your caption, a pinned comment or your video, then paste the comments here. Anyone who repeats the phrase is a confirmed AI bot. Bot Purge never posts or uploads anything for you.</p>
+        <div class="row"><input id="cLabel" placeholder="Which post? (e.g. cooking video, June 3)"><input id="cPhrase" placeholder="Your own phrase (optional)"><button class="primary" id="cNew">Create canary</button></div>
+        <div id="cList" style="margin-top:10px"></div>
       </div>
     </div>
 
@@ -214,10 +252,67 @@ function switchTab(t) {
   state.tab = t;
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   document.querySelectorAll("[data-view]").forEach(v => v.classList.toggle("hidden", v.dataset.view !== t));
-  ({ dash: loadDash, flags: loadFlags, queue: loadJobs, howto: loadHowto, log: loadLog, alerts: loadAlerts, plans: loadPlans })[t]();
+  ({ dash: loadDash, flags: loadFlags, queue: loadJobs, howto: loadHowto, log: loadLog, alerts: loadAlerts, plans: loadPlans, inbox: loadInbox })[t]();
 }
 
 // ---------- dashboard ----------
+// ---------- inbox ----------
+async function paywalled(e) {
+  if (/part of Bot Purge/.test(e.message)) { toast(e.message); switchTab("plans"); return true; }
+  toast(e.message); return false;
+}
+$("mImport").onclick = async () => {
+  const f = $("mFile").files[0]; if (!f) return toast("Choose a file first");
+  const fd = new FormData(); fd.append("file", f);
+  try { const r = await api(`/api/inbox/import/${$("mSource").value}`, { method: "POST", form: fd, headers: auth() });
+    toast(`Scanned ${r.imported} messages from ${r.senders} senders`); $("mFile").value = ""; loadInbox(); } catch (e) { paywalled(e); }
+};
+$("pGo").onclick = async () => {
+  try { const r = await api("/api/inbox/paste", { method: "POST", headers: auth(), body: { platform: $("pPlatform").value, kind: $("pKind").value, context: $("pContext").value, text: $("pText").value } });
+    toast(`Scanned ${r.imported} message${r.imported === 1 ? "" : "s"}`); $("pText").value = ""; loadInbox(); } catch (e) { paywalled(e); }
+};
+$("sTab").onchange = loadInbox;
+async function loadInbox() {
+  const rows = await api(`/api/inbox/senders?tab=${$("sTab").value}`, { headers: auth() });
+  $("sRows").innerHTML = rows.map(r => {
+    const who = r.name || (r.handle ? "@" + r.handle : r.sender_id);
+    const k = `${esc(r.platform)}|${esc(r.sender_id)}`;
+    return `<tr><td><div class="who">${avatar(who, r.sender_id)}<div><div class="n">${esc(who)}</div><div class="small muted">${esc(r.platform === "email" ? r.sender_id : (PLATFORM_NAMES[r.platform] || r.platform))}</div>
+        ${r.canary_hit ? `<span class="chip bad">Canary: confirmed AI bot</span>` : ""}</div></div></td>
+      <td><span class="pill ${esc(r.label)}">${Math.round(r.score)}</span></td>
+      <td><ul class="reasons">${r.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul></td><td class="hide-sm">${r.items}</td>
+      <td><div class="row"><button class="small" data-see="${k}">Messages</button>
+        ${r.status === "active" ? `<button class="small" data-sfb="${k}" data-bot="0">Real person</button><button class="small" data-block="${k}">Blocked it</button>` : `<button class="small" data-undo="${k}">Undo</button>`}</div></td></tr>`;
+  }).join("") || `<tr><td colspan="5" class="muted">Nothing here yet.</td></tr>`;
+  const split = k => { const i = k.indexOf("|"); return [k.slice(0, i), k.slice(i + 1)]; };
+  document.querySelectorAll("[data-see]").forEach(b => b.onclick = async () => {
+    const [p, id] = split(b.dataset.see);
+    const items = await api(`/api/inbox/senders/${encodeURIComponent(p)}/${encodeURIComponent(id)}`, { headers: auth() });
+    $("sDetail").innerHTML = `<h3>Messages</h3>` + items.map(i => `<div class="card" style="margin-bottom:6px"><div class="small muted">${esc(i.kind)} · ${fmtDate(i.at)}${i.context ? " · " + esc(i.context) : ""} · score ${Math.round(i.score || 0)}</div><div style="white-space:pre-wrap">${esc(i.text)}</div></div>`).join("")
+      + (items.length ? "" : `<p class="muted small">Message text is deleted 24 hours after import; the verdict stays.</p>`);
+  });
+  document.querySelectorAll("[data-sfb]").forEach(b => b.onclick = async () => { const [p, id] = split(b.dataset.sfb);
+    await api("/api/inbox/feedback", { method: "POST", headers: auth(), body: { platform: p, sender_id: id, is_bot: false } }); toast("Marked as a real person"); loadInbox(); });
+  document.querySelectorAll("[data-block]").forEach(b => b.onclick = async () => { const [p, id] = split(b.dataset.block);
+    try { await api("/api/inbox/status", { method: "POST", headers: auth(), body: { platform: p, sender_id: id, status: "removed" } }); loadInbox(); } catch (e) { paywalled(e); } });
+  document.querySelectorAll("[data-undo]").forEach(b => b.onclick = async () => { const [p, id] = split(b.dataset.undo);
+    await api("/api/inbox/status", { method: "POST", headers: auth(), body: { platform: p, sender_id: id, status: "active" } }); loadInbox(); });
+  loadCanaries();
+}
+async function loadCanaries() {
+  const cs = await api("/api/canaries", { headers: auth() });
+  $("cList").innerHTML = cs.map(c => `<div class="card" style="margin-bottom:8px"><div class="row"><b>${esc(c.label || "Canary")}</b><span class="chip ${c.hits.length ? "bad" : ""}">${c.hits.length} bot${c.hits.length === 1 ? "" : "s"} caught</span><span style="flex:1"></span>
+      <button class="small" data-copy="${esc(c.instruction)}">Copy instruction</button><button class="small danger" data-del="${esc(c.phrase)}">Delete</button></div>
+    <pre>${esc(c.instruction)}</pre>${c.hits.length ? `<div class="small">Caught: ${c.hits.map(h => esc(h.handle || h.sender_id)).join(", ")}</div>` : ""}</div>`).join("")
+    || `<p class="muted small">No canaries yet.</p>`;
+  document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); toast("Copied — paste it into your caption or pinned comment"); } catch (_) { toast("Select the text and copy it"); } });
+  document.querySelectorAll("#cList [data-del]").forEach(b => b.onclick = async () => { await api("/api/canaries?phrase=" + encodeURIComponent(b.dataset.del), { method: "DELETE", headers: auth() }); loadCanaries(); });
+}
+$("cNew").onclick = async () => {
+  try { await api("/api/canaries", { method: "POST", headers: auth(), body: { label: $("cLabel").value, phrase: $("cPhrase").value || null } }); $("cLabel").value = $("cPhrase").value = ""; loadCanaries(); }
+  catch (e) { paywalled(e); }
+};
+
 // ---------- scan result & plans ----------
 const CAT_NAMES = { fake_followers: "Fake friends & followers", bots_you_follow: "Bots you follow", impersonators: "Impersonators (clones)",
   spam_messengers: "Spam & scam messengers", scam_emails: "Scam & spam email senders" };
@@ -427,7 +522,7 @@ async function loadJob() {
     body += `<div class="row" style="margin-top:12px"><label class="f">Device<select id="gDev"><option value="web">Web</option><option value="ios">iPhone / iPad</option><option value="android">Android</option></select></label></div>`;
     body += Object.entries(g.steps).map(([a, s]) => `<h3>${ACTION_NAMES[a]} — steps</h3><ol class="steps">${s.steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol>${s.outdated ? `<p class="notice small">Users say these steps may be out of date. See Removal steps to suggest a fix.</p>` : ""}`).join("");
   }
-  body += `<div class="table-wrap"><table><thead><tr><th>Account</th><th>Action</th><th>Status</th><th></th></tr></thead><tbody>` + j.items.map(i => {
+  body += `<div class="table-wrap"><table class="stack"><thead><tr><th>Account</th><th>Action</th><th>Status</th><th></th></tr></thead><tbody>` + j.items.map(i => {
     const name = i.name || (i.handle ? "@" + i.handle : i.account_id);
     const canTick = ["queued", "opened", "failed"].includes(i.status) && i.mode !== "one_click";
     return `<tr><td>${esc(name)}</td><td>${ACTION_NAMES[i.action]}</td><td><span class="chip ${i.status === "removed" ? "good" : i.status === "failed" ? "bad" : ""}">${esc(i.status)}</span>${i.error ? `<div class="small muted">${esc(i.error)}</div>` : ""}</td>

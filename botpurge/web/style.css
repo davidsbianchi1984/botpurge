@@ -96,3 +96,13 @@ pre { background: var(--bg); border: 1px solid var(--line); padding: 10px; borde
 .plan-price { font-size: 18px; }
 .plans .plan ul { padding-left: 18px; margin: 4px 0; flex: 1; }
 @media (max-width: 640px) { .cta { grid-template-columns: 1fr; } .result-head .big { font-size: 22px; } }
+
+/* Phones: list tables become stacked cards so reasons stay readable. */
+@media (max-width: 640px) {
+  table.stack thead { display: none; }
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+  table.stack tr { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; position: relative; }
+  table.stack td { border: none; padding: 4px 0; }
+  table.stack td:empty { display: none; }
+  table.stack .who { min-width: 0; }
+}

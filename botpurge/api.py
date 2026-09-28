@@ -24,6 +24,8 @@ from .db import DB
 from .importers import EXPORT_HELP, ImportError_, import_export
 from .instructions_store import InstructionStore
 from .models import Platform
+from .inbox import InboxService
+from .messages import import_messages, parse_paste
 from .personal import NotFound, PersonalService
 from .plans import PlanRequired, Plans, catalog
 from .purge.console import PurgeService, Rule
@@ -38,6 +40,7 @@ class Services:
         self.db = db
         self.personal = PersonalService(db)
         self.plans = Plans(db)
+        self.inbox = InboxService(db)
         self.instructions = InstructionStore(db)
         self.x_http = x_http
         self.removal = RemovalService(db, self.personal, x_client_for=self.x_client_for)
@@ -74,7 +77,7 @@ class Services:
         for b in self.db.q("SELECT tenant_id, id, actor FROM t_batches WHERE state='running'"):
             self.purge.step(b["tenant_id"], b["id"], b["actor"])
             done["batches"] += 1
-        done["purged_raw"] = self.personal.purge_raw()
+        done["purged_raw"] = self.personal.purge_raw() + self.inbox.purge_raw()
         for uid in self.personal.due_rescans():
             done["rescans"] += 1
             if self.db.one("SELECT 1 FROM secrets WHERE user_id=? AND name='x_access_token'", (uid,)):
@@ -232,6 +235,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
             del data  # raw export is never persisted
         rec = svc.personal.store_connections(uid, platform, conns)
         result = svc.personal.scan(uid, platform.value)
+        svc.inbox.scan(uid)  # newly flagged accounts strengthen the case against their messages
         return {"imported": len(conns), "reconciled": rec, **result}
 
     # X OAuth (PKCE)
@@ -406,6 +410,84 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     @app.post("/api/admin/instructions/{iid}/moderate", dependencies=[Depends(admin)])
     def moderate_instructions(iid: str, body: ModerateIn):
         return svc.instructions.moderate(iid, body.approve)
+
+    # Inbox, comments, live chat and email
+    @app.post("/api/inbox/import/{source}")
+    async def inbox_import(source: str, file: UploadFile = File(...), uid: str = Depends(user)):
+        svc.plans.require(uid, "messages")
+        data = await file.read()
+        try:
+            msgs = import_messages(source, file.filename or "upload", data)
+        except ImportError_ as exc:
+            raise HTTPException(400, str(exc))
+        finally:
+            del data
+        return {"imported": len(msgs), **svc.inbox.store(uid, msgs)}
+
+    class PasteIn(BaseModel):
+        platform: str = "tiktok"
+        kind: str = "comment"
+        context: str = ""
+        text: str
+
+    @app.post("/api/inbox/paste")
+    def inbox_paste(body: PasteIn, uid: str = Depends(user)):
+        svc.plans.require(uid, "messages")
+        if body.kind not in ("comment", "live", "dm"):
+            raise HTTPException(400, "kind must be comment, live or dm")
+        msgs = parse_paste(body.text[:500_000], body.platform, body.kind, body.context)
+        if not msgs:
+            raise HTTPException(400, 'Paste one message per line as "handle: message"')
+        return {"imported": len(msgs), **svc.inbox.store(uid, msgs)}
+
+    @app.get("/api/inbox/senders")
+    def inbox_senders(platform: Optional[str] = None, tab: str = "flagged", uid: str = Depends(user)):
+        return svc.inbox.senders(uid, platform, tab)
+
+    @app.get("/api/inbox/senders/{platform}/{sender_id}")
+    def inbox_sender(platform: str, sender_id: str, uid: str = Depends(user)):
+        return svc.inbox.sender_items(uid, platform, sender_id)
+
+    class SenderFeedbackIn(BaseModel):
+        platform: str
+        sender_id: str
+        is_bot: bool
+
+    @app.post("/api/inbox/feedback")
+    def inbox_feedback(body: SenderFeedbackIn, uid: str = Depends(user)):
+        return svc.inbox.feedback(uid, body.platform, body.sender_id, body.is_bot)
+
+    class SenderStatusIn(BaseModel):
+        platform: str
+        sender_id: str
+        status: str
+
+    @app.post("/api/inbox/status")
+    def inbox_status(body: SenderStatusIn, uid: str = Depends(user)):
+        if body.status == "removed":
+            svc.plans.require(uid, "remove")
+        svc.inbox.set_status(uid, body.platform, body.sender_id, body.status)
+        return {"ok": True}
+
+    class CanaryIn(BaseModel):
+        label: str = ""
+        phrase: Optional[str] = None
+
+    @app.get("/api/canaries")
+    def list_canaries(uid: str = Depends(user)):
+        return svc.inbox.canaries(uid)
+
+    @app.post("/api/canaries")
+    def new_canary(body: CanaryIn, uid: str = Depends(user)):
+        svc.plans.require(uid, "canary")
+        out = svc.inbox.new_canary(uid, body.label, body.phrase)
+        svc.inbox.scan(uid)
+        return out
+
+    @app.delete("/api/canaries")
+    def delete_canary(phrase: str, uid: str = Depends(user)):
+        svc.inbox.delete_canary(uid, phrase)
+        return {"ok": True}
 
     # Section 10 metrics
     @app.get("/api/admin/metrics", dependencies=[Depends(admin)])
