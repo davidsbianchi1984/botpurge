@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Thank you — Bot Purge</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🛡️%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main style="max-width:640px">
+  <div class="panel" id="box"><h2>Thank you!</h2><p class="muted" id="wait">Confirming your payment…</p></div>
+</main>
+<script src="/static/common.js"></script>
+<script>
+const sid = new URLSearchParams(location.search).get("session_id") || "";
+const box = document.getElementById("box");
+let tries = 0;
+async function poll() {
+  try {
+    const { license } = await api(`/api/billing/license?session_id=${encodeURIComponent(sid)}`);
+    box.innerHTML = `<h2>You're all set 🎉</h2>
+      <p>Here is your license key. Open Bot Purge, go to <b>Plans</b>, press <b>Enter license key</b> and paste it in.</p>
+      <textarea id="key" readonly rows="5" style="width:100%;font-family:monospace">${esc(license)}</textarea>
+      <div class="row"><button class="primary" id="copy">Copy key</button><a class="button" href="/">Open Bot Purge</a></div>
+      <p class="small muted">Keep it somewhere safe. Lost it? Use "Email me my key" in the app's Plans page and it's sent to the email you paid with.</p>`;
+    document.getElementById("copy").onclick = async () => { await navigator.clipboard.writeText(license); toast("Copied"); };
+  } catch (e) {
+    if (++tries < 40) return setTimeout(poll, 1500);
+    document.getElementById("wait").textContent = "Your payment went through, but confirming it is taking longer than usual. Your license key will also be emailed to you, or refresh this page in a minute.";
+  }
+}
+if (sid) poll(); else document.getElementById("wait").textContent = "This page needs the link from checkout.";
+</script>
+</body>
+</html>

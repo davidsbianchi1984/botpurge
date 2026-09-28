@@ -94,14 +94,14 @@ class Plans:
         self.db = db
 
     def current(self, user_id: str) -> dict:
-        r = self.db.one("SELECT plan, plan_activated_at, plan_renews_at FROM users WHERE id=?", (user_id,))
+        r = self.db.one("SELECT plan, plan_activated_at, plan_renews_at, license_key FROM users WHERE id=?", (user_id,))
         plan = r["plan"] if r and r["plan"] in PLANS else "free"
         renews = sec.parse_iso(r["plan_renews_at"]) if r else None
         if plan == "protect" and renews and renews < sec.now() and not beta():
             plan = "cleanup" if self._bought_cleanup(user_id) else "free"  # subscription lapsed
         return {"plan": plan, "name": PLANS[plan]["name"], "activated_at": r["plan_activated_at"] if r else None,
                 "renews_at": r["plan_renews_at"] if r else None, "features": sorted(self.features(user_id, plan)),
-                "beta": beta()}
+                "beta": beta(), "license": r["license_key"] if r else None}
 
     def _bought_cleanup(self, user_id: str) -> bool:
         return bool(self.db.one("SELECT 1 FROM purchases WHERE user_id=? AND plan IN ('cleanup','protect')", (user_id,)))
@@ -116,7 +116,7 @@ class Plans:
         if feature not in self.features(user_id):
             raise PlanRequired(feature)
 
-    def activate(self, user_id: str, plan: str, payment_ref: Optional[str] = None) -> dict:
+    def activate(self, user_id: str, plan: str, payment_ref: Optional[str] = None, renews_at: Optional[str] = None) -> dict:
         """Switch plan. During the beta this is free; afterwards it needs a completed payment."""
         if plan not in PLANS:
             raise ValueError(f"unknown plan {plan}")
@@ -125,9 +125,43 @@ class Plans:
         now = sec.now()
         from datetime import timedelta
 
-        renews = sec.iso(now + timedelta(days=30)) if PLANS[plan]["interval"] == "month" else None
-        self.db.x("UPDATE users SET plan=?, plan_activated_at=?, plan_renews_at=? WHERE id=?",
-                  (plan, sec.iso(now), renews, user_id))
+        renews = renews_at or (sec.iso(now + timedelta(days=30)) if PLANS[plan]["interval"] == "month" else None)
+        self.db.x("UPDATE users SET plan=?, plan_activated_at=?, plan_renews_at=?, license_id=COALESCE(?, license_id) WHERE id=?",
+                  (plan, sec.iso(now), renews, payment_ref if (payment_ref or "").startswith("lic_") else None, user_id))
         self.db.x("INSERT INTO purchases(user_id,plan,amount_cents,at,payment_ref) VALUES (?,?,?,?,?)",
                   (user_id, plan, 0 if beta() else PLANS[plan]["price_cents"], sec.iso(now), payment_ref or ("beta" if beta() else None)))
         return self.current(user_id)
+
+    def apply_license(self, user_id: str, key: str) -> dict:
+        """Unlock a paid plan with a license key from the store (checked offline)."""
+        from .billing import verify_license
+
+        lic = verify_license(key)
+        taken = self.db.one("SELECT id FROM users WHERE license_id=? AND id!=?", (lic["id"], user_id))
+        if taken and os.environ.get("BOTPURGE_DESKTOP") != "1":
+            raise ValueError("That license key is already in use on another account")
+        now = sec.now()
+        self.db.x("UPDATE users SET plan=?, plan_activated_at=?, plan_renews_at=?, license_id=?, license_key=? WHERE id=?",
+                  (lic["plan"], sec.iso(now), lic.get("expires"), lic["id"], key.strip(), user_id))
+        if not self.db.one("SELECT 1 FROM purchases WHERE user_id=? AND payment_ref=?", (user_id, lic["id"])):
+            self.db.x("INSERT INTO purchases(user_id,plan,amount_cents,at,payment_ref) VALUES (?,?,?,?,?)",
+                      (user_id, lic["plan"], PLANS[lic["plan"]]["price_cents"], sec.iso(now), lic["id"]))
+        return self.current(user_id)
+
+    def refresh_licenses(self, fetch) -> int:
+        """Daily: swap each Protect license for the store's latest (renewals extend it).
+        ``fetch(key) -> new key``; network errors leave the old key working until it expires."""
+        from .billing import LicenseError, verify_license
+
+        n = 0
+        for r in self.db.q("SELECT id, license_key FROM users WHERE license_key IS NOT NULL AND plan='protect'"):
+            try:
+                new = fetch(r["license_key"])
+                lic = verify_license(new, allow_expired=True)
+            except LicenseError:
+                continue
+            except Exception:
+                continue
+            self.db.x("UPDATE users SET license_key=?, plan_renews_at=? WHERE id=?", (new, lic.get("expires"), r["id"]))
+            n += 1
+        return n

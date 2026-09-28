@@ -31,7 +31,7 @@ build-backend = "setuptools.build_meta"
 include = ["botpurge*"]
 
 [tool.setuptools.package-data]
-botpurge = ["web/*"]
+botpurge = ["web/*", "license_public.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -196,6 +196,9 @@
         <p class="small muted">Gmail: takeout.google.com → Mail → .mbox. Outlook/Apple Mail: drag messages out as .eml, or export a mailbox.
           Android texts: the free "SMS Backup &amp; Restore" app → back up → upload the .xml. iPhone texts: back up to your computer (Finder/iTunes), then upload <code>sms.db</code> (the desktop app finds it for you).</p>
         <div class="row"><button id="iphoneScan">Scan texts from my iPhone backup</button><span class="small muted">Desktop app: finds the backup on this computer for you.</span></div>
+        <h3>Connect your inbox</h3>
+        <p class="small muted">Read-only: Bot Purge can read your mail to find scams but can never send, delete or change anything. Protect checks it every day.</p>
+        <div class="row" id="mailLinks"></div>
         <h3>Paste comments or live chat</h3>
         <p class="small muted">Data exports don't include comments on your posts or live chat. Copy them from the app and paste them here, one per line as <code>handle: message</code>.</p>
         <div class="row">
@@ -253,6 +256,13 @@
     <!-- Plans -->
     <div data-view="plans" class="hidden">
       <div class="panel"><h2>Plans</h2><p class="muted small" id="betaNote"></p><div class="grid plans" id="planCards"></div></div>
+      <div class="panel" id="licensePanel">
+        <h3>Already paid?</h3>
+        <form class="row" id="licForm"><input id="licKey" placeholder="Paste your license key (starts with BP1.)" style="flex:1" autocomplete="off">
+          <button class="primary">Enter license key</button></form>
+        <div class="row small"><button class="link" id="manageSub" type="button">Manage or cancel my subscription</button>
+          <button class="link" id="lostKey" type="button">Email me my key</button></div>
+      </div>
     </div>
 
     <!-- Alerts -->
@@ -319,7 +329,7 @@ function switchTab(t) {
   state.tab = t;
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   document.querySelectorAll("[data-view]").forEach(v => v.classList.toggle("hidden", v.dataset.view !== t));
-  ({ dash: loadDash, flags: loadFlags, queue: loadJobs, howto: loadHowto, log: loadLog, alerts: loadAlerts, plans: loadPlans, inbox: loadInbox, live: loadLive })[t]();
+  ({ dash: loadDash, flags: loadFlags, queue: loadJobs, howto: loadHowto, log: loadLog, alerts: loadAlerts, plans: loadPlans, inbox: () => { loadMail().catch(() => {}); return loadInbox(); }, live: loadLive })[t]();
 }
 
 // ---------- dashboard ----------
@@ -400,6 +410,24 @@ $("pGo").onclick = async () => {
     toast(`Scanned ${r.imported} message${r.imported === 1 ? "" : "s"}`); $("pText").value = ""; loadInbox(); } catch (e) { paywalled(e); }
 };
 $("sTab").onchange = loadInbox;
+async function loadMail() {
+  const links = await api("/api/mail", { headers: auth() });
+  $("mailLinks").innerHTML = links.map(l => l.connected
+    ? `<span class="chip good">${esc(l.name)} connected${l.last_sync ? " · checked " + fmtDate(l.last_sync) : ""}</span>${l.last_error ? `<span class="chip bad" title="${esc(l.last_error)}">needs attention</span>` : ""}
+       <button class="small" data-msync="${l.provider}">Check now</button><button class="small link" data-moff="${l.provider}">Disconnect</button>`
+    : `<button data-mon="${l.provider}" ${l.available ? "" : "disabled title='Not set up in this copy yet'"}>Connect ${esc(l.name)}</button>`).join("");
+  document.querySelectorAll("[data-mon]").forEach(b => b.onclick = async () => {
+    try { const r = await api(`/api/mail/${b.dataset.mon}/connect`, { method: "POST", headers: auth() });
+      window.open(r.authorize_url, "_blank", "noopener"); toast("Finish signing in in your browser, then come back here.", 6000);
+      window.addEventListener("focus", () => { loadMail(); loadInbox(); }, { once: true }); }
+    catch (e) { paywalled(e); }
+  });
+  document.querySelectorAll("[data-msync]").forEach(b => b.onclick = async () => {
+    try { const r = await api(`/api/mail/${b.dataset.msync}/sync`, { method: "POST", headers: auth() }); toast(`Checked ${r.fetched} emails`); loadMail(); loadInbox(); }
+    catch (e) { paywalled(e); }
+  });
+  document.querySelectorAll("[data-moff]").forEach(b => b.onclick = async () => { await api(`/api/mail/${b.dataset.moff}`, { method: "DELETE", headers: auth() }); loadMail(); });
+}
 async function loadInbox() {
   const rows = await api(`/api/inbox/senders?tab=${$("sTab").value}`, { headers: auth() });
   $("sRows").innerHTML = rows.map(r => {
@@ -500,10 +528,38 @@ async function loadPlans() {
     ${p.id === "protect" ? `<div class="chip good">Most protection</div>` : ""}
     <h3>${esc(p.name)}</h3><div class="plan-price">${priceTag(p)}</div><p class="small muted">${esc(p.pitch)}</p>
     <ul class="small">${p.feature_text.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
-    ${mine.plan === p.id ? `<button disabled>Your plan</button>` : p.price_cents ? `<button class="primary" data-plan="${p.id}">${cat.beta ? "Activate free" : "Get " + esc(p.name)}</button>` : ""}
+    ${mine.plan === p.id ? `<button disabled>Your plan</button>` : p.price_cents ? `<button class="primary" data-plan="${p.id}">${cat.beta ? "Activate free" : "Buy " + esc(p.name)}</button>` : ""}
   </div>`).join("");
-  document.querySelectorAll("[data-plan]").forEach(b => b.onclick = async () => { await activate(b.dataset.plan); loadPlans(); });
+  document.querySelectorAll("[data-plan]").forEach(b => b.onclick = async () => { await getPlan(b.dataset.plan); loadPlans(); });
+  $("licensePanel").classList.toggle("hidden", cat.beta && !mine.license);
+  $("manageSub").classList.toggle("hidden", mine.plan !== "protect" || !mine.license);
 }
+async function getPlan(planId) {
+  const cat = await getCatalog();
+  if (cat.beta) return activate(planId);
+  if (!cat.can_buy) { toast("Buying isn't available in this copy yet. Please try again later."); return; }
+  try {
+    if (cat.store_url) { window.open(`${cat.store_url}/buy/${planId}`, "_blank", "noopener"); toast("Checkout opened in your browser. When it's done, paste the license key here."); return; }
+    const { url } = await api("/api/billing/checkout", { method: "POST", body: { plan: planId }, headers: auth() });
+    location.href = url;
+  } catch (e) { toast(e.message); }
+}
+$("licForm").onsubmit = async ev => {
+  ev.preventDefault();
+  try { const r = await api("/api/me/license", { method: "POST", body: { license: $("licKey").value.trim() }, headers: auth() });
+    $("licKey").value = ""; toast(`${r.name} is active. Thank you!`); loadPlans(); }
+  catch (e) { toast(e.message); }
+};
+$("manageSub").onclick = async () => {
+  try { const { url } = await api("/api/me/billing/portal", { method: "POST", headers: auth() }); window.open(url, "_blank", "noopener"); }
+  catch (e) { toast(e.message); }
+};
+$("lostKey").onclick = async () => {
+  const email = prompt("The email address you paid with:");
+  if (!email) return;
+  try { toast((await api("/api/billing/send-keys", { method: "POST", body: { email } })).detail, 6000); }
+  catch (e) { toast(e.message); }
+};
 
 async function loadDash() {
   loadResult().catch(() => {});
