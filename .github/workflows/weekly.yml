@@ -21,7 +21,12 @@ jobs:
       - run: pip install -e .[dev] playwright
       - run: python -m playwright install --with-deps chromium
       - name: Browser tests (guided, assisted, extension, done-for-you agent, console, appeals)
-        run: BOTCLEANER_UI_TESTS=1 pytest -q tests/test_ui.py
+        # Fails if any browser test is skipped instead of run, so a misnamed
+        # setting can't turn this check into a silent pass.
+        run: |
+          set -o pipefail
+          BOTPURGE_UI_TESTS=1 pytest -q -rs tests/test_ui.py tests/test_agent.py | tee ui.log
+          ! grep -q "skipped" ui.log
       - name: Accuracy gates and red team
         run: python -m botpurge.evaluation
       - name: Load test, Module A (100k connections)
