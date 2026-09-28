@@ -53,6 +53,8 @@ class Connection(BaseModel):
     direction: Direction
     connected_at: Optional[datetime] = None
     avatar_hash: Optional[str] = None  # 64-bit perceptual hash, hex
+    avatar_url: Optional[str] = None   # fetched once to hash/label, never stored with the image
+    avatar_labels: list[str] = Field(default_factory=list)  # on-device checks: blank, no_face
 
     # Profile details, when the source provides them (X API does; exports mostly don't).
     profile_url: Optional[str] = None

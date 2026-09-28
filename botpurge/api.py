@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
+import httpx
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
@@ -60,6 +61,20 @@ class Services:
     def sync_x(self, user_id: str) -> dict:
         client, me = self.x_client_for(user_id)
         conns = client.connections(me)
+        from . import vision
+
+        http = self.x_http or httpx.Client(timeout=15, follow_redirects=True)
+
+        def fetch(url: str):
+            if not url.startswith("https://pbs.twimg.com/"):
+                return None  # only X's own image host
+            try:
+                r = http.get(url)
+                return r.content if r.status_code == 200 and len(r.content) < 2_000_000 else None
+            except httpx.HTTPError:
+                return None
+
+        vision.enrich(conns, fetch)
         rec = self.personal.store_connections(user_id, Platform.x, conns)
         return {"imported": len(conns), "reconciled": rec, **self.personal.scan(user_id, "x")}
 

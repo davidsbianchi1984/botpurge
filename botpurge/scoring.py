@@ -31,6 +31,7 @@ WEIGHTS: dict[str, float] = {
     "bot_wave": 0.30,
     "handle_pattern": 0.30,
     "default_photo": 0.25,
+    "faceless_avatar": 0.15,
     "stock_photo": 0.40,
     "follow_ratio": 0.35,
     "spam_bio": 0.40,
@@ -202,26 +203,43 @@ class Scorer:
             if total >= 20 and cnt.most_common(1)[0][1] / total >= 0.9:
                 ctx.date_only.add(plat)
 
-        # Arrival bursts: many connections landing in the same hour (or day, for date-only
-        # exports) per platform+direction, far above this list's normal rate.
-        buckets: dict[tuple, list[Connection]] = defaultdict(list)
+        # Arrival bursts: many connections landing within one hour (or one day, for date-only
+        # exports) per platform+direction, far above this list's normal rate. The window
+        # slides, so a burst that straddles 18:59 -> 19:00 is still one burst.
+        streams: dict[tuple, list[Connection]] = defaultdict(list)
+        buckets: Counter = Counter()
         for c in conns:
             t = _utc(c.connected_at)
             if t and c.direction != Direction.following:
-                unit = t.replace(hour=0, minute=0, second=0, microsecond=0) if c.platform.value in ctx.date_only \
+                day_only = c.platform.value in ctx.date_only
+                streams[(c.platform, c.direction, day_only)].append(c)
+                unit = t.replace(hour=0, minute=0, second=0, microsecond=0) if day_only \
                     else t.replace(minute=0, second=0, microsecond=0)
-                buckets[(c.platform, c.direction, unit)].append(c)
+                buckets[(c.platform, c.direction, unit)] += 1
         if buckets:
-            sizes = [len(v) for v in buckets.values()]
-            med = statistics.median(sizes)
-            threshold = max(5, 5 * med)
-            for v in buckets.values():
-                if len(v) >= threshold:
-                    ctx.burst_keys.update(c.key for c in v)
-                    # Most of the burst sharing one machine-made handle style is coordination.
-                    patterned = [c for c in v if _machine_handle(c.handle)]
-                    if len(patterned) >= 5 and len(patterned) / len(v) >= 0.5:
-                        ctx.coordinated_keys.update(c.key for c in patterned)
+            threshold = max(5, 5 * statistics.median(buckets.values()))  # "normal" = the typical busy hour
+            for (_p, _d, day_only), items in streams.items():
+                items.sort(key=lambda c: _utc(c.connected_at))
+                times = [_utc(c.connected_at) for c in items]
+                machine = [_machine_handle(c.handle) for c in items]
+                prefix = [0]
+                for m in machine:
+                    prefix.append(prefix[-1] + m)
+                span = timedelta(days=1) if day_only else timedelta(hours=1)
+                j, marked = 0, 0  # items[:marked] are already in a burst
+                for i in range(len(items)):
+                    while times[i] - times[j] >= span:
+                        j += 1
+                    size = i - j + 1
+                    if size >= threshold:
+                        patterned = prefix[i + 1] - prefix[j]
+                        # Most of the burst sharing one machine-made handle style is coordination.
+                        coordinated = patterned >= 5 and patterned / size >= 0.5
+                        for k in range(max(j, marked), i + 1):
+                            ctx.burst_keys.add(items[k].key)
+                            if coordinated and machine[k]:
+                                ctx.coordinated_keys.add(items[k].key)
+                        marked = i + 1
 
         # Follow sprees: the user followed many accounts within ten minutes.
         following = sorted(
@@ -367,6 +385,10 @@ class Scorer:
 
         if c.has_default_avatar:
             add("default_photo", 1.0, "No profile photo")
+        elif "blank" in c.avatar_labels:
+            add("default_photo", 0.8, "Profile photo is a blank placeholder")
+        elif "no_face" in c.avatar_labels:
+            add("faceless_avatar", 1.0, "Profile photo shows no face (back of head, object or scenery)")
         if c.avatar_hash and any(imagehash.similar(c.avatar_hash, s, 6) for s in ctx.stock_hashes):
             add("stock_photo", 1.0, "Profile photo matches a known stock or AI-generated image")
 

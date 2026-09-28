@@ -168,3 +168,13 @@ def test_signup_wave_is_relative_to_the_lists_normal_day():
     res = {r.connection.account_id: r for r in Scorer(now=NOW).score(conns + wave)}
     assert not any("bot_wave" in {x.code for x in res[f"u{i}"].reasons} for i in range(3000))
     assert all("bot_wave" in {x.code for x in res[f"w{i}"].reasons} for i in range(40))
+
+
+def test_burst_straddling_the_hour_is_one_burst():
+    start = datetime(2026, 5, 1, 18, 49, tzinfo=timezone.utc)
+    bots = [conn(f"b{i}", handle=f"lucy{48291730 + i}", connected_at=start + timedelta(minutes=i)) for i in range(12)]
+    real = [conn(f"r{i}", handle=f"friend.{i}", connected_at=datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(days=40 * i, hours=i))
+            for i in range(40)]
+    res = {r.connection.account_id: r for r in Scorer(now=NOW).score(bots + real)}
+    assert all("arrival_burst" in {x.code for x in res[f"b{i}"].reasons} for i in range(12))
+    assert not any("arrival_burst" in {x.code for x in res[f"r{i}"].reasons} for i in range(40))

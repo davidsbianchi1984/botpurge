@@ -195,5 +195,6 @@ def to_connection(u: dict, direction: Direction) -> Connection:
         following_count=pm.get("following_count"),
         bio=u.get("description"),
         has_default_avatar=("default_profile_images" in img) if img else None,
+        avatar_url=(img.replace("_normal.", "_200x200.") if img and "default_profile_images" not in img else None),
         verified=u.get("verified"),
     )

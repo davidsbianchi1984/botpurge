@@ -15,8 +15,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-images = ["Pillow>=10"]
-dev = ["pytest>=8"]
+vision = ["Pillow>=10", "opencv-python-headless>=4.8,<5"]  # opencv 5 dropped the bundled face models
+dev = ["pytest>=8", "Pillow>=10", "opencv-python-headless>=4.8,<5"]
 
 [project.scripts]
 botpurge = "botpurge.__main__:main"
