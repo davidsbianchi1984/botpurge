@@ -168,6 +168,32 @@ CREATE TABLE IF NOT EXISTS canaries (
     PRIMARY KEY (user_id, token)
 );
 
+CREATE TABLE IF NOT EXISTS lg_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    policy_json TEXT NOT NULL,
+    state TEXT NOT NULL,                            -- running | stopped
+    started_at TEXT NOT NULL,
+    stopped_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lg_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES lg_sessions(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    author_id TEXT NOT NULL,
+    author_name TEXT,
+    text TEXT,
+    score REAL NOT NULL,
+    action TEXT NOT NULL,                           -- none | delete | timeout | ban
+    reasons_json TEXT NOT NULL,
+    applied INTEGER NOT NULL DEFAULT 0,             -- 1 when carried out on the platform
+    undone INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+);
+
 CREATE TABLE IF NOT EXISTS secrets (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,

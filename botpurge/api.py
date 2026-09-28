@@ -26,6 +26,7 @@ from .importers import EXPORT_HELP, ImportError_, import_export
 from .instructions_store import InstructionStore
 from .models import Platform
 from .inbox import InboxService
+from .liveguard import ChatMessage, LiveGuardService
 from .messages import import_messages, parse_paste
 from .personal import NotFound, PersonalService
 from .plans import PlanRequired, Plans, catalog
@@ -42,6 +43,7 @@ class Services:
         self.personal = PersonalService(db)
         self.plans = Plans(db)
         self.inbox = InboxService(db)
+        self.liveguard = LiveGuardService(db, secrets_get=self.get_secret, http=x_http)
         self.instructions = InstructionStore(db)
         self.x_http = x_http
         self.removal = RemovalService(db, self.personal, x_client_for=self.x_client_for)
@@ -54,6 +56,10 @@ class Services:
             raise RuntimeError("X is not connected")
         return (xapi.XClient(sec.unseal(tok["sealed"], f"{user_id}:x_access_token"), http=self.x_http),
                 sec.unseal(me["sealed"], f"{user_id}:x_user_id"))
+
+    def get_secret(self, user_id: str, name: str) -> Optional[str]:
+        r = self.db.one("SELECT sealed FROM secrets WHERE user_id=? AND name=?", (user_id, name))
+        return sec.unseal(r["sealed"], f"{user_id}:{name}") if r else None
 
     def save_secret(self, user_id: str, name: str, value: str) -> None:
         self.db.x("INSERT OR REPLACE INTO secrets VALUES (?,?,?)", (user_id, name, sec.seal(value, f"{user_id}:{name}")))
@@ -503,6 +509,71 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def delete_canary(phrase: str, uid: str = Depends(user)):
         svc.inbox.delete_canary(uid, phrase)
         return {"ok": True}
+
+    # Live Guard (Protect): removes bots from live chat as they appear
+    @app.put("/api/liveguard/credentials/{platform}")
+    def liveguard_credentials(platform: str, body: dict[str, str], uid: str = Depends(user)):
+        svc.plans.require(uid, "liveguard")
+        need = {"twitch": {"client_id", "token", "login", "broadcaster_id", "moderator_id"}, "youtube": {"token"}}.get(platform)
+        if need is None:
+            raise HTTPException(400, "Credentials are only needed for twitch and youtube; TikTok and Instagram use the agent's moderator account")
+        missing = need - set(body)
+        if missing:
+            raise HTTPException(400, f"Missing: {', '.join(sorted(missing))}")
+        import json as _json
+
+        svc.save_secret(uid, f"liveguard_{platform}", _json.dumps({k: body[k] for k in need}))
+        return {"ok": True, "platform": platform}
+
+    class LiveStartIn(BaseModel):
+        platform: str
+        channel: str = Field(description="Twitch channel name, YouTube liveChatId, or a label for TikTok/Instagram")
+        policy: dict[str, Any] = Field(default_factory=dict)
+
+    @app.post("/api/liveguard/sessions")
+    def liveguard_start(body: LiveStartIn, uid: str = Depends(user)):
+        svc.plans.require(uid, "liveguard")
+        return svc.liveguard.start(uid, body.platform, body.channel, body.policy)
+
+    @app.get("/api/liveguard/sessions")
+    def liveguard_sessions(uid: str = Depends(user)):
+        return svc.liveguard.sessions(uid)
+
+    @app.get("/api/liveguard/sessions/{sid}")
+    def liveguard_session(sid: str, uid: str = Depends(user)):
+        return svc.liveguard.session(uid, sid)
+
+    class ChatIn(BaseModel):
+        author_id: str
+        text: str
+        author_name: str = ""
+        message_id: str = ""
+        badges: list[str] = Field(default_factory=list)
+
+    class ChatBatchIn(BaseModel):
+        messages: list[ChatIn]
+
+    @app.post("/api/liveguard/sessions/{sid}/chat")
+    def liveguard_chat(sid: str, body: ChatBatchIn, uid: str = Depends(user)):
+        platform = svc.liveguard.session(uid, sid)["platform"]
+        msgs = [ChatMessage(platform=platform, author_id=m.author_id, text=m.text[:2000], author_name=m.author_name,
+                            message_id=m.message_id, badges=set(m.badges), at=sec.now()) for m in body.messages[:500]]
+        return svc.liveguard.feed(uid, sid, msgs)
+
+    class ModeIn(BaseModel):
+        mode: str
+
+    @app.post("/api/liveguard/sessions/{sid}/mode")
+    def liveguard_mode(sid: str, body: ModeIn, uid: str = Depends(user)):
+        return svc.liveguard.set_mode(uid, sid, body.mode)
+
+    @app.post("/api/liveguard/sessions/{sid}/stop")
+    def liveguard_stop(sid: str, uid: str = Depends(user)):
+        return svc.liveguard.stop(uid, sid)
+
+    @app.post("/api/liveguard/sessions/{sid}/events/{event_id}/undo")
+    def liveguard_undo(sid: str, event_id: int, uid: str = Depends(user)):
+        return svc.liveguard.undo(uid, sid, event_id)
 
     # Section 10 metrics
     @app.get("/api/admin/metrics", dependencies=[Depends(admin)])

@@ -93,7 +93,8 @@ SOLICIT = re.compile(
     r"whats ?app|telegram|t\.me/|snap(chat)?:|kik|cash ?app|venmo|zelle|paypal me|"
     r"invest(ment|ing)? (with|opportunit)|forex|crypto (signal|trad)|bitcoin|profit daily|earn \$?\d|"
     r"sugar (daddy|mommy|baby)|onlyfans|of link|18\+|hot (pics|singles)|lonely|"
-    r"promot(e|ion|er) (your|ur) (account|page)|grow your (account|page|followers)|free followers|"
+    r"promot(e|ion|er) (your|ur) (account|page|stream|channel|videos?|music)|grow your (account|page|followers|stream|channel)|"
+    r"free (followers|viewers|likes)|dm @\w+|"
     r"collab\?? (dm|send)|brand ambassador|ambassador program|send (me )?(a )?dm)",
     re.I,
 )

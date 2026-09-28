@@ -26,6 +26,7 @@ FEATURES = {
     "impersonation": "Impersonation watch with instant alerts",
     "agent": "Done-for-you removal by the Bot Purge agent",
     "email": "Email scam and spam monitoring",
+    "liveguard": "Live Guard: removes bots from your live chat as they appear",
     "reports": "Weekly protection report",
     "priority": "Priority support",
 }
