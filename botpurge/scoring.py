@@ -84,7 +84,7 @@ def _utc(d: Optional[datetime]) -> Optional[datetime]:
 
 def _norm_name(s: str) -> str:
     s = s.lower()
-    s = re.sub(r"[^a-z\s]", "", s)
+    s = re.sub(r"[^a-z0-9\s]", "", s)  # keep digits: "Friend 1" and "Friend 2" are different names
     return " ".join(s.split())
 
 
@@ -331,8 +331,8 @@ class Scorer:
                     if not imagehash.similar(a.avatar_hash, b.avatar_hash, 12):
                         continue  # same name, clearly different photos: two different people
                     strength = 1.0
-                elif not exact or not _handles_alike(a.handle, b.handle):
-                    continue  # no photo to compare: a similar name alone isn't impersonation
+                elif not exact or not _handles_alike(a.handle, b.handle) or len(_norm_name(a.name).split()) < 2:
+                    continue  # no photo to compare: a similar or first-name-only match isn't impersonation
                 else:
                     strength = 0.7  # identical name, no photo evidence: flag for review, don't pre-select
                 newer, older = self._newer(a, b)

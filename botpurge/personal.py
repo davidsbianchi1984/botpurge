@@ -16,6 +16,7 @@ from .models import Connection, Direction, Label, Platform, ScoredAccount
 from .scoring import PersonalModel, Scorer
 
 RAW_TTL = timedelta(hours=24)
+CADENCE_DAYS = {"daily": 1, "weekly": 7, "monthly": 30}
 
 IMPERSONATION_REPORT = {
     "x": "https://help.x.com/forms/impersonation",
@@ -166,6 +167,19 @@ class PersonalService:
             for k, old in prior.items():
                 if k[0] in scanned_platforms and k not in live and old["status"] not in ("removed", "failed", "pending"):
                     tx.execute("DELETE FROM flags WHERE user_id=? AND platform=? AND account_id=? AND direction=?", (user_id, *k))
+            # Screening: bots that showed up since the last scan (not on the very first scan).
+            if prior:
+                fresh: dict[str, int] = {}
+                for r in results:
+                    c = r.connection
+                    k = (c.platform.value, c.account_id, c.direction.value)
+                    if k not in prior and r.label in (Label.likely_bot, Label.suspicious) and not r.is_clone:
+                        fresh[c.platform.value] = fresh.get(c.platform.value, 0) + 1
+                for plat, n in fresh.items():
+                    tx.execute("INSERT INTO alerts VALUES (?,?,?,?,?,?,?,?,0)",
+                               (sec.new_id("al_"), user_id, sec.iso(), "new_threats",
+                                f"{n} new account{'s' if n > 1 else ''} in your {plat} lists look{'' if n > 1 else 's'} like {'bots' if n > 1 else 'a bot'}.",
+                                plat, None, None))
             for r in new_clones:
                 c = r.connection
                 real = self.db.one(
@@ -335,9 +349,9 @@ class PersonalService:
         self.db.x("UPDATE alerts SET read=1 WHERE user_id=?", (user_id,))
 
     def set_rescan(self, user_id: str, cadence: str) -> dict:
-        if cadence not in ("off", "weekly", "monthly"):
-            raise ValueError("cadence must be off, weekly or monthly")
-        nxt = None if cadence == "off" else sec.iso(sec.now() + timedelta(days=7 if cadence == "weekly" else 30))
+        if cadence not in ("off", "daily", "weekly", "monthly"):
+            raise ValueError("cadence must be off, daily, weekly or monthly")
+        nxt = None if cadence == "off" else sec.iso(sec.now() + timedelta(days=CADENCE_DAYS[cadence]))
         self.db.x("UPDATE users SET rescan=?, next_rescan_at=? WHERE id=?", (cadence, nxt, user_id))
         return {"rescan": cadence, "next_rescan_at": nxt}
 
@@ -351,7 +365,7 @@ class PersonalService:
         due = [r for r in self.db.q("SELECT id, rescan, next_rescan_at FROM users WHERE rescan!='off' AND next_rescan_at<=?",
                                     (sec.iso(at),))]
         for r in due:
-            days = 7 if r["rescan"] == "weekly" else 30
+            days = CADENCE_DAYS.get(r["rescan"], 30)
             self.db.x("UPDATE users SET next_rescan_at=? WHERE id=?", (sec.iso(at + timedelta(days=days)), r["id"]))
             self.db.x("INSERT INTO alerts VALUES (?,?,?,?,?,?,?,?,0)",
                       (sec.new_id("al_"), r["id"], sec.iso(at), "rescan",

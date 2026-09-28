@@ -101,6 +101,9 @@ class Services:
             self.purge.step(b["tenant_id"], b["id"], b["actor"])
             done["batches"] += 1
         done["purged_raw"] = self.personal.purge_raw() + self.inbox.purge_raw()
+        from .protect import send_weekly_reports
+
+        done["reports"] = send_weekly_reports(self.db, self.plans.features)
         for uid in self.personal.due_rescans():
             done["rescans"] += 1
             if self.db.one("SELECT 1 FROM secrets WHERE user_id=? AND name='x_access_token'", (uid,)):
@@ -635,8 +638,17 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     class RescanIn(BaseModel):
         cadence: str
 
+    @app.get("/api/me/report")
+    def my_report(days: int = 7, uid: str = Depends(user)):
+        from .protect import weekly_report
+
+        svc.plans.require(uid, "reports")
+        return weekly_report(svc.db, uid, max(1, min(days, 90)))
+
     @app.post("/api/rescan")
     def rescan(body: RescanIn, uid: str = Depends(user)):
+        if body.cadence == "daily":
+            svc.plans.require(uid, "monitor")
         return svc.personal.set_rescan(uid, body.cadence)
 
     @app.get("/api/export.csv")
