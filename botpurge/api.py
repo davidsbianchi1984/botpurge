@@ -12,6 +12,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -637,9 +638,17 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
             raise HTTPException(503, "The done-for-you agent runs in the Bot Purge desktop app")
         pw = sync_playwright().start()
         profile = os.environ.get("BOTPURGE_BROWSER_PROFILE", str(Path.home() / ".botpurge" / "browser"))
-        ctx = pw.chromium.launch_persistent_context(profile, headless=os.environ.get("BOTPURGE_AGENT_HEADLESS") == "1",
-                                                    viewport={"width": 1280, "height": 900})
-        return pw, ctx
+        kw = dict(headless=os.environ.get("BOTPURGE_AGENT_HEADLESS") == "1", viewport={"width": 1280, "height": 900})
+        # Use the Chrome or Edge already on the computer; fall back to Playwright's own Chromium.
+        for channel in (os.environ.get("BOTPURGE_AGENT_BROWSER"), "chrome", "msedge", None):
+            try:
+                ctx = pw.chromium.launch_persistent_context(profile, channel=channel, **kw) if channel \
+                    else pw.chromium.launch_persistent_context(profile, **kw)
+                return pw, ctx
+            except Exception:
+                continue
+        pw.stop()
+        raise HTTPException(503, "No browser found for the agent: install Google Chrome or Microsoft Edge")
 
     @app.post("/api/agent/login/{platform}")
     def agent_login(platform: str, uid: str = Depends(user)):
@@ -667,6 +676,25 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         finally:
             ctx.close()
             pw.stop()
+
+    # Desktop app only: read texts straight from an iPhone backup on this computer
+    @app.get("/api/local/iphone-backups")
+    def iphone_backups(uid: str = Depends(user)):
+        if os.environ.get("BOTPURGE_DESKTOP") != "1":
+            raise HTTPException(404, "Only available in the Bot Purge desktop app")
+        from .desktop import iphone_sms_backups
+
+        return [{"path": p, "modified": sec.iso(datetime.fromtimestamp(os.path.getmtime(p), timezone.utc))} for p in iphone_sms_backups()]
+
+    @app.post("/api/local/iphone-backups/scan")
+    def iphone_scan(uid: str = Depends(user)):
+        svc.plans.require(uid, "messages")
+        found = iphone_backups(uid)
+        if not found:
+            raise HTTPException(404, "No iPhone backup found. Back up your iPhone to this computer in Finder or iTunes "
+                                     "(unencrypted), then try again.")
+        msgs = import_messages("sms", "sms.db", Path(found[0]["path"]).read_bytes())
+        return {"imported": len(msgs), "backup": found[0]["modified"], **svc.inbox.store(uid, msgs)}
 
     # Section 10 metrics
     @app.get("/api/admin/metrics", dependencies=[Depends(admin)])

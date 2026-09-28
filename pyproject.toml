@@ -15,11 +15,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-vision = ["Pillow>=10", "opencv-python-headless>=4.8,<5"]  # opencv 5 dropped the bundled face models
+vision = ["Pillow>=10", "opencv-python-headless>=4.8,<5"]
+desktop = ["pywebview>=5", "playwright>=1.40", "Pillow>=10", "opencv-python-headless>=4.8,<5"]  # opencv 5 dropped the bundled face models
 dev = ["pytest>=8", "Pillow>=10", "opencv-python-headless>=4.8,<5"]
 
 [project.scripts]
 botpurge = "botpurge.__main__:main"
+botpurge-desktop = "botpurge.desktop:cli"
 
 [build-system]
 requires = ["setuptools>=68"]

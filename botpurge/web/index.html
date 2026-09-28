@@ -49,6 +49,15 @@
         <a class="btn primary" href="/console" style="margin-top:12px">Open the Purge Console</a>
       </div>
     </div>
+    <div class="panel" style="max-width:980px;margin:16px auto 0;text-align:center">
+      <h2>Get the app</h2>
+      <p class="small muted">The desktop app keeps everything on your computer, reads your iPhone text backups, and runs Live Guard and the done-for-you agent.</p>
+      <div class="row" style="justify-content:center">
+        <a class="btn primary" href="https://github.com/davidsbianchi1984/botpurge/releases/latest">Download for Windows</a>
+        <a class="btn primary" href="https://github.com/davidsbianchi1984/botpurge/releases/latest">Download for Mac</a>
+        <a class="btn" href="https://github.com/davidsbianchi1984/botpurge/releases/latest">Linux</a>
+      </div>
+    </div>
   </section>
 
   <section id="appView" class="hidden">
@@ -186,6 +195,7 @@
         </div>
         <p class="small muted">Gmail: takeout.google.com → Mail → .mbox. Outlook/Apple Mail: drag messages out as .eml, or export a mailbox.
           Android texts: the free "SMS Backup &amp; Restore" app → back up → upload the .xml. iPhone texts: back up to your computer (Finder/iTunes), then upload <code>sms.db</code> (the desktop app finds it for you).</p>
+        <div class="row"><button id="iphoneScan">Scan texts from my iPhone backup</button><span class="small muted">Desktop app: finds the backup on this computer for you.</span></div>
         <h3>Paste comments or live chat</h3>
         <p class="small muted">Data exports don't include comments on your posts or live chat. Copy them from the app and paste them here, one per line as <code>handle: message</code>.</p>
         <div class="row">
@@ -371,6 +381,10 @@ $("mImport").onclick = async () => {
   const fd = new FormData(); fd.append("file", f);
   try { const r = await api(`/api/inbox/import/${$("mSource").value}`, { method: "POST", form: fd, headers: auth() });
     toast(`Scanned ${r.imported} messages from ${r.senders} senders`); $("mFile").value = ""; loadInbox(); } catch (e) { paywalled(e); }
+};
+$("iphoneScan").onclick = async () => {
+  try { const r = await api("/api/local/iphone-backups/scan", { method: "POST", headers: auth() }); toast(`Scanned ${r.imported} texts from your iPhone backup`); loadInbox(); }
+  catch (e) { paywalled(e); }
 };
 $("pGo").onclick = async () => {
   try { const r = await api("/api/inbox/paste", { method: "POST", headers: auth(), body: { platform: $("pPlatform").value, kind: $("pKind").value, context: $("pContext").value, text: $("pText").value } });

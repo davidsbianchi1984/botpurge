@@ -1,0 +1,79 @@
+name: Desktop app builds
+
+# Builds the downloadable Bot Purge app for Windows, macOS and Linux, starts
+# each build and checks it answers, and attaches the files to a GitHub release
+# when a version tag (v1.2.3) is pushed. Also runs when packaging changes.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "botpurge/desktop.py"
+      - "pyproject.toml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .[desktop] pyinstaller
+      - run: pyinstaller --noconfirm packaging/botpurge.spec
+
+      - name: Smoke test (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          BIN=dist/BotPurge
+          BOTPURGE_PORT=8799 "$BIN" --no-window > run.log 2>&1 &
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8799/api/health && exit 0; sleep 1; done
+          cat run.log; exit 1
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:BOTPURGE_PORT = "8799"
+          Start-Process -FilePath dist\BotPurge.exe -ArgumentList "--no-window"
+          for ($i = 0; $i -lt 90; $i++) {
+            try { Invoke-RestMethod http://127.0.0.1:8799/api/health; exit 0 } catch { Start-Sleep 1 }
+          }
+          exit 1
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p out
+          case "${{ runner.os }}" in
+            Windows) cp dist/BotPurge.exe out/BotPurge-Windows.exe ;;
+            macOS)   (cd dist && zip -qry "../out/BotPurge-macOS.zip" "Bot Purge.app") ;;
+            Linux)   cp dist/BotPurge out/BotPurge-Linux && chmod +x out/BotPurge-Linux ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotPurge-${{ runner.os }}
+          path: out/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
