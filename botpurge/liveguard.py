@@ -110,7 +110,7 @@ class Judge:
             if len(authors) >= 3:
                 # A pitch or link posted by several accounts at once is a bot network; fans
                 # chanting the same harmless line ("GG well played everyone!") is not.
-                pitch = "solicitation" in sigs or "link_drop" in sigs
+                pitch = "solicitation" in sigs or "link_drop" in sigs or "fake_giveaway" in sigs
                 sigs["coordinated_script"] = (1.0 if pitch else 0.5,
                                               f"Same scripted line as {len(authors) - 1} other accounts just now")
         if key in self.confirmed:
@@ -128,7 +128,8 @@ class Judge:
         texts = [t for _, t, _ in reasons[:3]]
 
         pol = self.policy
-        strong = bool(codes & {"canary", "confirmed_bot"}) or sigs.get("coordinated_script", (0,))[0] >= 1.0
+        strong = bool(codes & {"canary", "confirmed_bot"}) or sigs.get("coordinated_script", (0,))[0] >= 1.0 \
+            or sigs.get("fake_giveaway", (0,))[0] >= 1.0
         if (strong and score >= pol.timeout_at) or (score >= pol.ban_at and self.strikes[key] >= 2):
             action = "ban"
         elif score >= pol.timeout_at or (score >= pol.delete_at and self.strikes[key] >= 2):

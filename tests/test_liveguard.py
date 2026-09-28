@@ -120,3 +120,15 @@ def test_liveguard_is_protect_only_after_beta(client, user, monkeypatch):
     Plans(client.app.state.svc.db).activate(user["_id"], "cleanup", payment_ref="p1")
     r = client.post("/api/liveguard/sessions", headers=hdr(user), json={"platform": "tiktok", "channel": "x"})
     assert r.status_code == 402 and r.json()["plan"] == "protect"
+
+
+def test_fake_giveaway_script_is_banned_but_normal_talk_about_prizes_is_not():
+    j = Judge(Policy(mode="protect"))
+    for i, line in enumerate(["The first 10 people to type WIN get $10,000!! Claim in my bio",
+                              "I'm giving away $5,000 to everyone who comments GIFT, DM me",
+                              "Donating 1000 USDT to the next 20 people, message me on telegram"]):
+        d = j.judge(msg(f"scam{i}", line, i))
+        assert d.action == "ban", (line, d)
+    for i, line in enumerate(["did anyone win the giveaway last week?", "i spent $10 on this skin lol",
+                              "congrats to the first 3 winners!"]):
+        assert j.judge(msg(f"fan{i}", line, 50 + i)).action == "none", line

@@ -71,6 +71,7 @@ WEIGHTS = {
     "template_across_senders": 0.60,
     "flooding": 0.55,
     "generic_comment": 0.20,
+    "fake_giveaway": 0.85,
     "ai_artifact": 0.55,
     "canary": 0.97,
     "known_bot": 0.50,
@@ -107,6 +108,17 @@ GENERIC = re.compile(
     r"[\s!.,❤️🔥😍👍💯🙌✨😊👏]*$",
     re.I,
 )
+# "The first 10 people to type WIN get $10,000", "I'm giving away $5,000 to everyone who comments",
+# "gifting 20 followers", "claim at the link in my bio": prize bait from someone who isn't the host.
+GIVEAWAY = re.compile(
+    r"((first|next) \d+ (people|persons|viewers|followers|to)|everyone who (comments?|types?|dm|messages?)|"
+    r"(giving|give) ?away|giveaway|gifting|donat(e|ing)|airdrop|double your|send \$?\d+ (and|&) (get|receive))"
+    r".{0,80}(\$ ?\d[\d,.]*k?|\d[\d,.]* ?(dollars|usd|usdt|btc|eth|bitcoin|coins|gifts?)|iphone|ps5|gift ?card|cash)"
+    r"|(\$ ?\d[\d,.]*k?|\d[\d,.]* ?(dollars|usd|usdt|btc|eth))\s.{0,60}(first|next) \d+",
+    re.I,
+)
+CLAIM = re.compile(r"(claim|dm me|message me|text me|type|comment|link in (my )?bio|telegram|whats ?app|t\.me)", re.I)
+
 AI_ARTIFACT = re.compile(
     r"(as an ai( language model)?|i('m| am) an ai|i cannot (comply|provide|help with)|"
     r"^certainly!|^sure! here('s| is)|here('s| is) a (comment|reply|response)|"
@@ -252,6 +264,9 @@ class MessageScorer:
             add("solicitation", 1.0 if m.kind == "dm" else 0.8, "Solicits: pushes you to a profile, app, number or money offer")
         if URL.search(text):
             add("link_drop", 1.0 if m.kind in ("comment", "live") else 0.6, "Drops a link")
+        if GIVEAWAY.search(text):
+            add("fake_giveaway", 1.0 if CLAIM.search(text) else 0.7,
+                "Prize bait (\"first 10 people to type ... get $10,000\"): a classic fake-giveaway script")
         if m.kind in ("comment", "live") and GENERIC.match(text.strip()):
             add("generic_comment", 1.0, "A one-size-fits-all comment that could go under any video")
         if AI_ARTIFACT.search(text):
