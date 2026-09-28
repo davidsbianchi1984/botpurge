@@ -271,7 +271,8 @@ const MODE_HELP = {
   assisted: "Opens each profile in your own logged-in browser, one at a time at a human pace. You click Remove/Unfollow yourself — we never click for you, so your account stays safe.",
   guided: "Shows a checklist with step-by-step instructions for your device. Tick each one off as you go.",
 };
-const MODE_NAMES = { one_click: "One-click (official API)", assisted: "Assisted (we open, you click)", guided: "Guided checklist" };
+const MODE_NAMES = { one_click: "One-click (official API)", assisted: "Assisted (we open, you click)", guided: "Guided checklist", agent: "Done-for-you (Bot Purge does the clicking, Protect)" };
+MODE_HELP.agent = "Bot Purge's agent removes them for you in its own browser on your computer, at a human pace. You'll be asked to read a short notice first.";
 let token = store.get("bc_token");
 let state = { tab: "dash", platform: "", dir: "", ftab: "likely_bot", rows: [], selected: new Set(), jobId: null, dash: null, help: {} };
 const auth = () => ({ Authorization: "Bearer " + token });
@@ -613,6 +614,13 @@ $("removeSel").onclick = async () => {
     if (result !== "ok") continue;
     try {
       if (!(await api("/api/me/plan", { headers: auth() })).features.includes("remove")) { toast("Removing threats is part of Bot Purge Cleanup."); switchTab("plans"); return; }
+      if ($("cMode").value === "agent") {
+        const c = await api(`/api/agent/consent/${p}`, { headers: auth() });
+        if (!c.consented) {
+          if (!confirm(c.text + "\n\nPress OK to let the Bot Purge agent do it for you on " + PLATFORM_NAMES[p] + ".")) continue;
+          await api(`/api/agent/consent/${p}`, { method: "POST", headers: auth() });
+        }
+      }
       const job = await api("/api/removals", { method: "POST", headers: auth(), body: { platform: p, mode: $("cMode").value, accounts: rows.map(r => ({ account_id: r.account_id, direction: r.direction })) } });
       state.jobId = job.id; switchTab("queue");
     } catch (e) { toast(e.message); }
@@ -637,6 +645,9 @@ async function loadJob() {
     ${["running", "paused"].includes(j.state) ? `<button class="danger" data-st="cancelled">Cancel</button>` : ""}</div>
     <div class="progress" style="margin:10px 0"><div style="width:${Math.round(100 * done / j.total)}%"></div></div>
     <div class="small muted">${Object.entries(j.counts).map(([k, v]) => `${v} ${k}`).join(" · ")}</div>`;
+  if (j.mode === "agent" && j.state === "running") body += `<div class="row" style="margin:10px 0"><button class="primary" id="agentRun">Start done-for-you</button>
+    <button id="agentLogin">Sign in to ${PLATFORM_NAMES[j.platform]} in the Bot Purge browser</button></div>
+    <p class="small muted">Runs in the Bot Purge desktop app, at a human pace and under an hourly limit. It stops immediately if ${PLATFORM_NAMES[j.platform]} pushes back.</p>`;
   if (j.mode === "one_click" && j.state === "running") body += `<p><button class="primary" id="runOne">Run next batch</button> <span class="small muted">Runs automatically in the background, too.</span></p>`;
   if (j.items.some(i => i.mode === "assisted") && j.state === "running") body += `<div class="panel" style="margin-top:12px"><h3>Assisted removal</h3><div id="assist"></div><button class="primary" id="nextBtn">Open next profile</button></div>`;
   if (j.mode === "guided") {
@@ -659,6 +670,9 @@ async function loadJob() {
   if ($("gDev")) { $("gDev").value = device; $("gDev").onchange = () => { device = $("gDev").value; loadJob(); }; }
   if ($("runOne")) $("runOne").onclick = async () => { try { await api(`/api/removals/${j.id}/run`, { method: "POST", headers: auth() }); loadJob(); } catch (e) { toast(e.message); } };
   if ($("nextBtn")) $("nextBtn").onclick = () => nextAssisted(j.id);
+  if ($("agentRun")) $("agentRun").onclick = async () => { $("agentRun").disabled = true; toast("The agent is working. You can keep using your computer.");
+    try { const r = await api(`/api/removals/${j.id}/agent/run`, { method: "POST", headers: auth() }); if (r.stopped || r.paused_for) toast(r.stopped || "Paused at the hourly limit"); } catch (e) { paywalled(e); } loadJob(); };
+  if ($("agentLogin")) $("agentLogin").onclick = async () => { try { const r = await api(`/api/agent/login/${j.platform}`, { method: "POST", headers: auth() }); toast(r.note); } catch (e) { toast(e.message); } };
 }
 async function confirmItem(jid, idx, outcome) { await api(`/api/removals/${jid}/items/${idx}/confirm`, { method: "POST", body: { outcome }, headers: auth() }); loadJob(); }
 async function nextAssisted(jid) {

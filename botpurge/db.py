@@ -170,6 +170,14 @@ CREATE TABLE IF NOT EXISTS apps (
     PRIMARY KEY (user_id, platform, name)
 );
 
+CREATE TABLE IF NOT EXISTS agent_consents (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL,
+    consented_at TEXT NOT NULL,
+    consent_text TEXT NOT NULL,                     -- exactly what the customer agreed to
+    PRIMARY KEY (user_id, platform)
+);
+
 CREATE TABLE IF NOT EXISTS canaries (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token TEXT NOT NULL,

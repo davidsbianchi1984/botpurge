@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -e .[dev] playwright
       - run: python -m playwright install --with-deps chromium
-      - name: Browser tests (guided, assisted, extension, console, appeals)
+      - name: Browser tests (guided, assisted, extension, done-for-you agent, console, appeals)
         run: BOTCLEANER_UI_TESTS=1 pytest -q tests/test_ui.py
       - name: Accuracy gates and red team
         run: python -m botpurge.evaluation

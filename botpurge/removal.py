@@ -25,12 +25,13 @@ from .personal import NotFound, PersonalService
 ACTION_FOR = {"friend": "unfriend", "follower": "remove_follower", "following": "unfollow"}
 
 # Seconds between items. X: unfollow is limited to ~50 per 15 minutes per user.
-PACE = {"one_click": 20.0, "assisted": 25.0, "guided": 0.0}
-MAX_BATCH = {"one_click": 400, "assisted": 200, "guided": 500}
+PACE = {"one_click": 20.0, "assisted": 25.0, "guided": 0.0, "agent": 0.0}   # the agent paces itself
+MAX_BATCH = {"one_click": 400, "assisted": 200, "guided": 500, "agent": 300}
 
 
 def modes_for(platform: str) -> list[str]:
-    return ["one_click", "assisted", "guided"] if platform == "x" else ["assisted", "guided"]
+    # "agent" is the paid done-for-you option (Protect, with the customer's consent per platform).
+    return ["one_click", "assisted", "guided"] if platform == "x" else ["assisted", "guided", "agent"]
 
 
 class RemovalService:

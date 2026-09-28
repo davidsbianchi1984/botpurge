@@ -25,6 +25,7 @@ from .db import DB
 from .importers import EXPORT_HELP, ImportError_, import_export
 from .instructions_store import InstructionStore
 from .models import Platform
+from .agent.runner import AgentService
 from .apps import import_apps
 from .inbox import AppsService, InboxService
 from .liveguard import ChatMessage, LiveGuardService
@@ -50,6 +51,7 @@ class Services:
         self.x_http = x_http
         self.removal = RemovalService(db, self.personal, x_client_for=self.x_client_for)
         self.purge = PurgeService(db, enforcer=purge_enforcer, http=x_http)
+        self.agent = AgentService(db, self.removal, self.personal)
 
     def x_client_for(self, user_id: str):
         tok = self.db.one("SELECT sealed FROM secrets WHERE user_id=? AND name='x_access_token'", (user_id,))
@@ -352,6 +354,10 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     @app.post("/api/removals")
     def create_removal(body: RemovalIn, uid: str = Depends(user)):
         svc.plans.require(uid, "remove")
+        if body.mode == "agent":
+            svc.plans.require(uid, "agent")
+            if not svc.agent.has_consent(uid, body.platform.value):
+                raise HTTPException(400, "Read and accept the done-for-you notice for this platform first")
         return svc.removal.create_job(uid, body.platform.value, body.accounts, body.mode)
 
     @app.get("/api/removals")
@@ -605,6 +611,62 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     @app.post("/api/liveguard/sessions/{sid}/events/{event_id}/undo")
     def liveguard_undo(sid: str, event_id: int, uid: str = Depends(user)):
         return svc.liveguard.undo(uid, sid, event_id)
+
+    # Done-for-you agent (Protect; runs in the desktop app's own browser)
+    @app.get("/api/agent/consent/{platform}")
+    def agent_consent_get(platform: str, uid: str = Depends(user)):
+        return {"platform": platform, "text": svc.agent.consent_text(platform), "consented": svc.agent.has_consent(uid, platform)}
+
+    @app.post("/api/agent/consent/{platform}")
+    def agent_consent_give(platform: str, uid: str = Depends(user)):
+        svc.plans.require(uid, "agent")
+        return svc.agent.give_consent(uid, platform)
+
+    @app.delete("/api/agent/consent/{platform}")
+    def agent_consent_withdraw(platform: str, uid: str = Depends(user)):
+        svc.agent.withdraw_consent(uid, platform)
+        return {"platform": platform, "consented": False}
+
+    LOGIN_URLS = {"instagram": "https://www.instagram.com/accounts/login/", "tiktok": "https://www.tiktok.com/login",
+                  "facebook": "https://www.facebook.com/login", "linkedin": "https://www.linkedin.com/login", "x": "https://x.com/login"}
+
+    def _agent_browser():
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            raise HTTPException(503, "The done-for-you agent runs in the Bot Purge desktop app")
+        pw = sync_playwright().start()
+        profile = os.environ.get("BOTPURGE_BROWSER_PROFILE", str(Path.home() / ".botpurge" / "browser"))
+        ctx = pw.chromium.launch_persistent_context(profile, headless=os.environ.get("BOTPURGE_AGENT_HEADLESS") == "1",
+                                                    viewport={"width": 1280, "height": 900})
+        return pw, ctx
+
+    @app.post("/api/agent/login/{platform}")
+    def agent_login(platform: str, uid: str = Depends(user)):
+        """Opens the agent's browser at the platform's login page; the customer signs in themselves."""
+        if platform not in LOGIN_URLS:
+            raise HTTPException(400, "unknown platform")
+        pw, ctx = _agent_browser()
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(LOGIN_URLS[platform])
+        return {"opened": LOGIN_URLS[platform], "note": "Sign in in the window that opened, then close it."}
+
+    @app.post("/api/removals/{job_id}/agent/run")
+    def agent_run(job_id: str, uid: str = Depends(user)):
+        svc.plans.require(uid, "agent")
+        custom = {}
+        job = svc.removal.job(uid, job_id)
+        for action in {i["action"] for i in job["items"]}:
+            mine = svc.instructions.best(job["platform"], "web", action, uid)
+            if mine.get("author_id") == uid:
+                custom[action] = mine["steps"]  # the customer's own written steps win
+        pw, ctx = _agent_browser()
+        try:
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            return svc.agent.run_job(uid, job_id, page, custom_steps=custom)
+        finally:
+            ctx.close()
+            pw.stop()
 
     # Section 10 metrics
     @app.get("/api/admin/metrics", dependencies=[Depends(admin)])

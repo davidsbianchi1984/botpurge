@@ -107,7 +107,7 @@ def test_guided_removal_then_recheck_marks_removed_or_failed(client, user):
     upload(client, user, followers)
     bots = flagged(client, user)[:4]
     assert len(bots) == 4
-    assert client.get("/api/removals/modes/instagram").json()["modes"] == ["assisted", "guided"]
+    assert client.get("/api/removals/modes/instagram").json()["modes"] == ["assisted", "guided", "agent"]
     r = client.post("/api/removals", headers=hdr(user), json={"platform": "instagram", "mode": "one_click",
                     "accounts": [{"account_id": b["account_id"], "direction": b["direction"]} for b in bots]})
     assert r.status_code == 400  # no one-click on Instagram
