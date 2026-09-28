@@ -101,10 +101,11 @@ CREATE TABLE IF NOT EXISTS removal_items (
     direction TEXT NOT NULL,
     action TEXT NOT NULL,                           -- unfriend | remove_follower | unfollow
     mode TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'queued',          -- queued | opened | pending | removed | failed | skipped
+    status TEXT NOT NULL DEFAULT 'queued',          -- queued | opened | pending | removed | blocked | reported | failed | skipped
     attempts INTEGER NOT NULL DEFAULT 0,
     error TEXT,
     updated_at TEXT,
+    reason TEXT,                                    -- report reason: spam | fake | impersonation | scam
     PRIMARY KEY (job_id, idx)
 );
 
@@ -381,6 +382,9 @@ class DB:
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(removal_jobs)")}
         if "finished_at" not in cols:
             self.conn.execute("ALTER TABLE removal_jobs ADD COLUMN finished_at TEXT")
+        icols = {r["name"] for r in self.conn.execute("PRAGMA table_info(removal_items)")}
+        if "reason" not in icols:
+            self.conn.execute("ALTER TABLE removal_items ADD COLUMN reason TEXT")
         ucols = {r["name"] for r in self.conn.execute("PRAGMA table_info(users)")}
         for col, ddl in (("plan", "TEXT NOT NULL DEFAULT 'free'"), ("plan_activated_at", "TEXT"), ("plan_renews_at", "TEXT")):
             if col not in ucols:

@@ -9,7 +9,7 @@ It never asks for a social media password. X connects through its official sign-
 | | Free scan | **Cleanup**: $20 one-time | **Protect**: $60/month |
 |---|---|---|---|
 | Scan every platform and see every threat with its reasons | ✓ | ✓ | ✓ |
-| Remove all threats (one-click on X, assisted, guided) | | ✓ | ✓ |
+| Remove, block or report threats, your choice (one-click on X, assisted, guided) | | ✓ | ✓ |
 | Scan DMs, texts, email and connected apps | | ✓ | ✓ |
 | Undo log and CSV export | | ✓ | ✓ |
 | **Done-for-you removal** by the Bot Purge agent | | | ✓ |
@@ -69,11 +69,35 @@ Live Guard moderates a stream's chat in real time: delete, then timeout, then ba
   - **Twitch and YouTube Live:** through their official moderation APIs.
   - **TikTok, Instagram and Facebook Live:** through a moderator account you add to your live, run by the agent.
 
+### Remove, block or report: your choice
+
+Select accounts and pick any mix of actions for the batch:
+
+- **Remove:** unfriend, remove follower or unfollow.
+- **Block:** they can't find, follow or message you again. Blocking also removes them from your lists.
+- **Report** to the platform as spam, a fake account, impersonation, or a scam. Reports come first, while the profile is still reachable.
+
+Reporting is guarded against abuse:
+
+- Only accounts rated *Likely bot*, or that you marked as a bot, can be reported.
+- Each account is reported once, with at most 50 reports per batch and 10 per hour by the agent.
+
+Every choice has step-by-step instructions for web, iPhone and Android. X's API only removes, so block and report go through the assisted, guided or done-for-you modes.
+
 ### Done-for-you agent (Protect)
 
-The agent removes accounts for you in its own browser profile on your computer, which you sign into yourself.
+The agent removes, blocks and reports accounts for you in its own browser profile on your computer, which you sign into yourself.
 
-- **Instructions:** it follows built-in step programs, or your own written steps ("Tap 'Following', then 'Unfollow'").
+- **Instructions:** it follows built-in step programs, or your own written steps. It understands:
+  - clicks ("Tap 'Following', then 'Unfollow'")
+  - keyboard shortcuts ("Press Ctrl+K", "hit Esc")
+  - typing ("Type 'lucy1' in the Search box")
+  - scrolling ("Scroll down until you see 'Report'")
+  - hovering, and picking from lists ("Select 'It's spam'")
+  - new windows and tabs ("Switch to the new window", "Close this tab", "Go back to the main window")
+  - browser pop-ups ("Accept the confirmation")
+  - screens that only sometimes appear ("Tap 'Next' if it's shown")
+- **Multi-screen flows:** report and block wizards try each platform's different labels for the same button.
 - **Pace and limits:** it keeps a human pace and stays under an hourly cap per platform.
 - **Stops on pushback:** at the first "Action blocked", "Try again later" or CAPTCHA, it stops the whole job and tells you.
 - **Consent first:** nothing runs until you accept a plain notice that the platforms forbid automation and can restrict accounts. The exact text you agreed to is stored.
@@ -106,7 +130,7 @@ The **desktop app** is the product people download. It keeps everything on their
 pip install -e .[dev]          # add [desktop] for the native window and the agent
 python -m botpurge             # web app at http://127.0.0.1:8000 (Purge Console at /console)
 python -m botpurge.desktop     # the desktop app
-pytest -q                      # 112 tests: detection gates, corpus, API, plans, Live Guard, agent, desktop
+pytest -q                      # 120+ tests: detection gates, corpus, API, plans, Live Guard, agent, desktop
 BOTPURGE_UI_TESTS=1 pytest -q tests/test_ui.py tests/test_agent.py   # real-browser tests
 python -m botpurge.evaluation  # accuracy gates, red team, bias check
 python -m botpurge.loadtest --module a --size 100000

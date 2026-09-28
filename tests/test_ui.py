@@ -223,3 +223,34 @@ def test_console_and_appeal_portal(server):
         assert "Chain intact" in pg.inner_text("#auditOk")
         br.close()
     assert errors == []
+
+
+def test_choose_block_and_report_in_web_app(server):
+    B, d = server["url"], server["dir"]
+    with sync_api.sync_playwright() as p:
+        br = launch(p)
+        pg = br.new_page()
+        pg.goto(B + "/")
+        pg.fill("#email", "blocker@example.com")
+        pg.click("#signup")
+        pg.wait_for_selector("#appView:not(.hidden)")
+        pg.set_input_files("#impFile", str(d / "followers_1.json"))
+        pg.click("#impGo")
+        pg.click("[data-review=instagram]")
+        pg.click("#fTabs [data-t=suspicious]")
+        pg.wait_for_selector("#flagRows tr")
+        pg.locator("#flagRows input[type=checkbox]").first.check()
+        pg.click("#removeSel")
+        pg.wait_for_selector("#confirmDlg[open]")
+        assert pg.is_checked("#cDoRemove") and pg.is_disabled("#cDoReport")   # no Likely bots selected: nothing reportable
+        pg.check("#cDoBlock")
+        assert pg.is_disabled("#cDoRemove") and "block all 1" in pg.inner_text("#cBody")
+        pg.uncheck("#cDoBlock")
+        pg.uncheck("#cDoRemove")
+        assert pg.is_disabled("#cOk")
+        pg.check("#cDoBlock")
+        pg.select_option("#cMode", "guided")
+        pg.click("#cOk")
+        pg.wait_for_selector("#jobPanel ol.steps li")
+        assert "Block" in pg.inner_text("#jobPanel")
+        br.close()
