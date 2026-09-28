@@ -27,7 +27,19 @@ CREATE TABLE IF NOT EXISTS users (
     rescan TEXT NOT NULL DEFAULT 'off',            -- off | weekly | monthly
     next_rescan_at TEXT,
     guardian_of TEXT,                               -- parent/guardian scanning a teen, with consent
-    consent_at TEXT
+    consent_at TEXT,
+    plan TEXT NOT NULL DEFAULT 'free',              -- free | cleanup | protect
+    plan_activated_at TEXT,
+    plan_renews_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    plan TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL,
+    at TEXT NOT NULL,
+    payment_ref TEXT
 );
 
 -- Raw-ish connection detail from imports/APIs. Purged after the raw-data TTL (24h).
@@ -116,6 +128,43 @@ CREATE TABLE IF NOT EXISTS alerts (
     text TEXT NOT NULL,
     platform TEXT, account_id TEXT, link TEXT,
     read INTEGER NOT NULL DEFAULT 0
+);
+
+-- Messages, comments and email (read from exports / mailbox files), one row per item.
+CREATE TABLE IF NOT EXISTS msg_items (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    kind TEXT NOT NULL,                             -- dm | comment | live | email
+    platform TEXT NOT NULL,                         -- tiktok | instagram | facebook | x | linkedin | email | other
+    sender_id TEXT NOT NULL,
+    sender_name TEXT, sender_handle TEXT,
+    text TEXT NOT NULL,
+    at TEXT,
+    context TEXT,                                   -- post/video id, live stream id, or email subject
+    score REAL, label TEXT, reasons_json TEXT,
+    imported_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, id)
+);
+
+-- Who sent them: the thing the user acts on (block, report, unsubscribe, remove).
+CREATE TABLE IF NOT EXISTS msg_senders (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    sender_name TEXT, sender_handle TEXT,
+    items INTEGER NOT NULL,
+    score REAL NOT NULL, label TEXT NOT NULL, reasons_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',          -- active | whitelisted | removed
+    first_at TEXT, last_at TEXT,
+    PRIMARY KEY (user_id, platform, sender_id)
+);
+
+CREATE TABLE IF NOT EXISTS canaries (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL,
+    label TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, token)
 );
 
 CREATE TABLE IF NOT EXISTS secrets (
@@ -287,6 +336,10 @@ class DB:
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(removal_jobs)")}
         if "finished_at" not in cols:
             self.conn.execute("ALTER TABLE removal_jobs ADD COLUMN finished_at TEXT")
+        ucols = {r["name"] for r in self.conn.execute("PRAGMA table_info(users)")}
+        for col, ddl in (("plan", "TEXT NOT NULL DEFAULT 'free'"), ("plan_activated_at", "TEXT"), ("plan_renews_at", "TEXT")):
+            if col not in ucols:
+                self.conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:

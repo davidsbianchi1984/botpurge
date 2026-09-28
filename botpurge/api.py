@@ -25,6 +25,7 @@ from .importers import EXPORT_HELP, ImportError_, import_export
 from .instructions_store import InstructionStore
 from .models import Platform
 from .personal import NotFound, PersonalService
+from .plans import PlanRequired, Plans, catalog
 from .purge.console import PurgeService, Rule
 from .purge.signals import SiteAccount
 from .removal import RemovalService, modes_for
@@ -36,6 +37,7 @@ class Services:
     def __init__(self, db: DB, purge_enforcer=None, x_http=None):
         self.db = db
         self.personal = PersonalService(db)
+        self.plans = Plans(db)
         self.instructions = InstructionStore(db)
         self.x_http = x_http
         self.removal = RemovalService(db, self.personal, x_client_for=self.x_client_for)
@@ -112,6 +114,10 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     async def _nf(_: Request, exc: Exception):
         return JSONResponse({"detail": str(exc) or "not found"}, status_code=404)
 
+    @app.exception_handler(PlanRequired)
+    async def _plan(_: Request, exc: PlanRequired):
+        return JSONResponse({"detail": str(exc), "plan": exc.plan, "feature": exc.feature}, status_code=402)
+
     @app.exception_handler(ValueError)
     async def _bad(_: Request, exc: Exception):
         return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -180,6 +186,25 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def signup(body: SignupIn):
         uid, token = svc.personal.register(body.email, body.guardian_of, body.teen_consent)
         return {"user_id": uid, "token": token}
+
+    @app.get("/api/plans")
+    def plans_catalog():
+        return catalog()
+
+    @app.get("/api/me/plan")
+    def my_plan(uid: str = Depends(user)):
+        return svc.plans.current(uid)
+
+    class PlanIn(BaseModel):
+        plan: str
+
+    @app.post("/api/me/plan")
+    def choose_plan(body: PlanIn, uid: str = Depends(user)):
+        return svc.plans.activate(uid, body.plan)
+
+    @app.get("/api/me/summary")
+    def summary(uid: str = Depends(user)):
+        return {**svc.personal.summary(uid), "plan": svc.plans.current(uid)}
 
     @app.get("/api/me/dashboard")
     def dashboard(uid: str = Depends(user)):
@@ -296,6 +321,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     @app.post("/api/removals")
     def create_removal(body: RemovalIn, uid: str = Depends(user)):
+        svc.plans.require(uid, "remove")
         return svc.removal.create_job(uid, body.platform.value, body.accounts, body.mode)
 
     @app.get("/api/removals")
@@ -419,6 +445,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     @app.get("/api/export.csv")
     def export_csv(uid: str = Depends(user)):
+        svc.plans.require(uid, "undo")
         return PlainTextResponse(svc.personal.export_csv(uid), media_type="text/csv",
                                  headers={"Content-Disposition": "attachment; filename=botpurge-log.csv"})
 

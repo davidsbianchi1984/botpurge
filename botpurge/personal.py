@@ -187,6 +187,30 @@ class PersonalService:
 
     # ---- review --------------------------------------------------------------------
 
+    def summary(self, user_id: str) -> dict:
+        """Scan results, antivirus style: how many threats, of which kinds."""
+        one = lambda sql: self.db.one(sql, (user_id,))["n"] or 0  # noqa: E731
+        live = "status IN ('active','failed','pending') AND label IN ('likely_bot','suspicious')"
+        cats = {
+            "fake_followers": one(f"SELECT COUNT(*) n FROM flags WHERE user_id=? AND {live} AND is_clone=0 AND direction IN ('friend','follower')"),
+            "bots_you_follow": one(f"SELECT COUNT(*) n FROM flags WHERE user_id=? AND {live} AND is_clone=0 AND direction='following'"),
+            "impersonators": one(f"SELECT COUNT(*) n FROM flags WHERE user_id=? AND {live} AND is_clone=1"),
+            "spam_messengers": one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=? AND status='active' AND platform!='email'"
+                                   " AND label IN ('likely_bot','suspicious')"),
+            "scam_emails": one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=? AND status='active' AND platform='email'"
+                               " AND label IN ('likely_bot','suspicious')"),
+        }
+        rings = one(f"SELECT COUNT(DISTINCT ring_id) n FROM flags WHERE user_id=? AND ring_id IS NOT NULL AND {live}")
+        high = one(f"SELECT COUNT(*) n FROM flags WHERE user_id=? AND {live} AND label='likely_bot'")
+        scanned = one("SELECT COUNT(*) n FROM flags WHERE user_id=?") + one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=?")
+        removed = one("SELECT COUNT(*) n FROM flags WHERE user_id=? AND status='removed'") \
+            + one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=? AND status='removed'")
+        last = self.db.one("SELECT MAX(finished_at) t FROM scans WHERE user_id=?", (user_id,))["t"]
+        total = sum(cats.values())
+        return {"threats": total, "high_risk": high, "bot_rings": rings, "categories": cats,
+                "scanned": scanned, "removed": removed, "last_scan": last,
+                "status": "clean" if total == 0 else "at_risk" if high else "review"}
+
     def dashboard(self, user_id: str) -> dict:
         per: dict[str, dict] = {}
         for r in self.db.q(
