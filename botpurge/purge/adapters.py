@@ -10,6 +10,19 @@ Every mapping is reversible except "removed", matching the tier table:
     removed      delete the user                    stays banned
     active       undo all of the above              undo all of the above
 
+    state        Shopify (customers)                WordPress / WooCommerce (users)
+    challenged   tag botpurge-challenged            no role (can sign in, can't comment/post/buy as member)
+    restricted   tag botpurge-restricted            no role
+    suspended    tag botpurge-suspended             no role
+    removed      delete the customer                delete the user (content reassigned)
+    active       remove the botpurge tags           back to the site's member role
+
+Shopify has no "suspend a customer" switch, so the tags drive whatever the
+shop sets up (a Shopify Flow, or a theme check that blocks checkout or
+reviews). Customers who have paid for orders are tagged ``paying`` and exempt.
+WordPress core has no suspension either; taking the role away is the
+closest reversible step. Staff roles are exempt.
+
 Credentials are sealed at rest; see ``PurgeService.set_adapter``.
 Check each platform's current API docs and rate limits before production use.
 """
@@ -167,6 +180,135 @@ class DiscordAdapter:
             raise AdapterError(f"unknown state {state}")
 
 
+class ShopifyAdapter:
+    """Shopify Admin GraphQL API, with a custom-app access token (read_customers, write_customers)."""
+
+    kind = "shopify"
+    TAGS = ("botpurge-challenged", "botpurge-restricted", "botpurge-suspended")
+
+    def __init__(self, shop: str, token: str, api_version: str = "2025-07", http: Optional[httpx.Client] = None):
+        shop = shop.strip().removeprefix("https://").removesuffix("/")
+        if not shop.endswith(".myshopify.com"):
+            shop += ".myshopify.com"
+        self.url = f"https://{shop}/admin/api/{api_version}/graphql.json"
+        self.http = http or httpx.Client(timeout=30)
+        self.headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+
+    def _gql(self, query: str, variables: Optional[dict] = None) -> dict:
+        for _ in range(5):
+            r = _check(self.http.post(self.url, headers=self.headers, json={"query": query, "variables": variables or {}}))
+            body = r.json()
+            errs = body.get("errors") or []
+            if any((e.get("extensions") or {}).get("code") == "THROTTLED" for e in errs):
+                time.sleep(2)
+                continue
+            if errs:
+                raise AdapterError(f"Shopify: {errs[0].get('message')}")
+            return body["data"]
+        raise AdapterError("rate limited")
+
+    @staticmethod
+    def gid(account_id: str) -> str:
+        return account_id if account_id.startswith("gid://") else f"gid://shopify/Customer/{account_id}"
+
+    def fetch_accounts(self, max_pages: int = 10_000) -> list[SiteAccount]:
+        q = """query($after: String) { customers(first: 250, after: $after) {
+                 pageInfo { hasNextPage endCursor }
+                 nodes { id email firstName lastName createdAt verifiedEmail state tags numberOfOrders amountSpent { amount } } } }"""
+        out: list[SiteAccount] = []
+        after = None
+        for _ in range(max_pages):
+            page = self._gql(q, {"after": after})["customers"]
+            for c in page["nodes"]:
+                tags = [t for t in c.get("tags") or [] if t in ("staff", "partner", "integration")]
+                if int(c.get("numberOfOrders") or 0) > 0 and float((c.get("amountSpent") or {}).get("amount") or 0) > 0:
+                    tags.append("paying")
+                name = " ".join(x for x in (c.get("firstName"), c.get("lastName")) if x)
+                out.append(SiteAccount(account_id=c["id"].rsplit("/", 1)[-1], username=(c.get("email") or "").split("@")[0],
+                                       display_name=name, email=c.get("email"), created_at=c.get("createdAt"),
+                                       email_verified=c.get("verifiedEmail"), tags=tags))
+            if not page["pageInfo"]["hasNextPage"]:
+                break
+            after = page["pageInfo"]["endCursor"]
+        return out
+
+    def _tags(self, account_id: str, add: list[str], remove: list[str]) -> None:
+        gid = self.gid(account_id)
+        if remove:
+            r = self._gql("mutation($id: ID!, $tags: [String!]!) { tagsRemove(id: $id, tags: $tags) { userErrors { message } } }",
+                          {"id": gid, "tags": remove})["tagsRemove"]
+            if r["userErrors"]:
+                raise AdapterError(r["userErrors"][0]["message"])
+        if add:
+            r = self._gql("mutation($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { message } } }",
+                          {"id": gid, "tags": add})["tagsAdd"]
+            if r["userErrors"]:
+                raise AdapterError(r["userErrors"][0]["message"])
+
+    def enforce(self, account_id: str, state: str, notice: Optional[dict] = None) -> None:
+        if state in ("challenged", "restricted", "suspended"):
+            keep = f"botpurge-{state}"
+            self._tags(account_id, [keep], [t for t in self.TAGS if t != keep])
+        elif state == "removed":
+            r = self._gql("mutation($input: CustomerDeleteInput!) { customerDelete(input: $input) { userErrors { message } } }",
+                          {"input": {"id": self.gid(account_id)}})["customerDelete"]
+            if r["userErrors"]:       # e.g. the customer has orders: Shopify keeps them, so they stay suspended
+                self._tags(account_id, ["botpurge-suspended"], [])
+        elif state == "active":
+            self._tags(account_id, [], list(self.TAGS))
+        else:
+            raise AdapterError(f"unknown state {state}")
+
+
+class WordPressAdapter:
+    """WordPress REST API with an Application Password of an administrator (Users > Profile)."""
+
+    kind = "wordpress"
+    STAFF = {"administrator", "editor", "author", "contributor", "shop_manager"}
+
+    def __init__(self, base_url: str, username: str, app_password: str, member_role: str = "subscriber",
+                 reassign_to: Optional[str] = None, http: Optional[httpx.Client] = None):
+        self.base = base_url.rstrip("/") + "/wp-json/wp/v2"
+        self.http = http or httpx.Client(timeout=30)
+        self.auth = (username, app_password.replace(" ", ""))
+        self.member_role = member_role
+        self.reassign = reassign_to
+
+    def _req(self, method: str, path: str, **kw) -> httpx.Response:
+        for _ in range(3):
+            r = self.http.request(method, self.base + path, auth=self.auth, **kw)
+            if r.status_code == 429:
+                time.sleep(float(r.headers.get("Retry-After", "2")))
+                continue
+            return _check(r)
+        raise AdapterError("rate limited")
+
+    def fetch_accounts(self, max_pages: int = 10_000) -> list[SiteAccount]:
+        out: list[SiteAccount] = []
+        for page in range(1, max_pages + 1):
+            r = self._req("GET", "/users", params={"context": "edit", "per_page": 100, "page": page})
+            for u in r.json():
+                roles = set(u.get("roles") or [])
+                out.append(SiteAccount(account_id=str(u["id"]), username=u.get("username", ""), display_name=u.get("name") or "",
+                                       email=u.get("email"), created_at=u.get("registered_date"),
+                                       tags=["staff"] if roles & self.STAFF else []))
+            if page >= int(r.headers.get("X-WP-TotalPages", "1")):
+                break
+        return out
+
+    def enforce(self, account_id: str, state: str, notice: Optional[dict] = None) -> None:
+        if state in ("challenged", "restricted", "suspended"):
+            self._req("POST", f"/users/{account_id}", json={"roles": []})
+        elif state == "removed":
+            if not self.reassign:
+                raise AdapterError("Set reassign_to (a user id to receive their posts) before permanent removal")
+            self._req("DELETE", f"/users/{account_id}", params={"force": "true", "reassign": self.reassign})
+        elif state == "active":
+            self._req("POST", f"/users/{account_id}", json={"roles": [self.member_role]})
+        else:
+            raise AdapterError(f"unknown state {state}")
+
+
 def build(kind: str, settings: dict, secret: str, http: Optional[httpx.Client] = None):
     if kind == "discourse":
         if not settings.get("base_url"):
@@ -176,4 +318,13 @@ def build(kind: str, settings: dict, secret: str, http: Optional[httpx.Client] =
         if not settings.get("guild_id"):
             raise ValueError("Discord needs guild_id")
         return DiscordAdapter(settings["guild_id"], secret, settings.get("verify_role_id"), http=http)
-    raise ValueError(f"unknown adapter {kind}; supported: discourse, discord")
+    if kind == "shopify":
+        if not settings.get("shop"):
+            raise ValueError("Shopify needs shop (your-store.myshopify.com)")
+        return ShopifyAdapter(settings["shop"], secret, settings.get("api_version") or "2025-07", http=http)
+    if kind == "wordpress":
+        if not settings.get("base_url") or not settings.get("username"):
+            raise ValueError("WordPress needs base_url and username (the secret is an Application Password)")
+        return WordPressAdapter(settings["base_url"], settings["username"], secret, settings.get("member_role") or "subscriber",
+                                settings.get("reassign_to"), http=http)
+    raise ValueError(f"unknown adapter {kind}; supported: discourse, discord, shopify, wordpress")

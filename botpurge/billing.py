@@ -16,7 +16,7 @@ Store settings: ``STRIPE_SECRET_KEY``, ``STRIPE_WEBHOOK_SECRET``,
 ``BOTPURGE_LICENSE_PRIVATE`` (from ``python -m botpurge.billing keygen``) and
 ``BOTPURGE_PUBLIC_URL``. App setting: the public key, in
 ``botpurge/license_public.txt`` or ``BOTPURGE_LICENSE_PUBLIC``, and
-``BOTPURGE_STORE_URL`` (where the Buy buttons go).
+``BOTPURGE_STORE_URL`` or ``release.json`` (where the Buy buttons go).
 
 While the beta is on (``BOTPURGE_BETA=1``) none of this is needed: every plan
 is free.

@@ -1,0 +1,18 @@
+{
+  "name": "Bot Purge",
+  "short_name": "Bot Purge",
+  "description": "Find and remove bots, fakes and scammers from your followers, DMs, texts and email.",
+  "id": "/",
+  "start_url": "/?source=app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d0a20",
+  "theme_color": "#161038",
+  "categories": ["security", "social", "utilities"],
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

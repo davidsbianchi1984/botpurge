@@ -5,7 +5,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 root = Path(SPECPATH).parent
-datas = [(str(root / "botpurge" / "web"), "botpurge/web"), (str(root / "botpurge" / "license_public.txt"), "botpurge"), (str(root / "extension"), "extension")]
+datas = [(str(root / "botpurge" / "web"), "botpurge/web"), (str(root / "botpurge" / "license_public.txt"), "botpurge"), (str(root / "botpurge" / "release.json"), "botpurge"), (str(root / "extension"), "extension")]
 binaries, hiddenimports = [], []
 hiddenimports += collect_submodules("uvicorn") + ["multipart", "python_multipart"]
 for pkg in ("playwright", "webview"):

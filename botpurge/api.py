@@ -29,7 +29,9 @@ from .instructions_store import InstructionStore
 from .models import Platform
 from .agent.runner import AgentService
 from .apps import import_apps
+from . import __version__
 from .billing import Billing, BillingError
+from .release import check_for_update, store_url
 from .inbox import AppsService, InboxService
 from .liveguard import ChatMessage, LiveGuardService
 from .messages import import_messages, parse_paste
@@ -80,7 +82,7 @@ class Services:
 
     def refresh_licenses(self) -> int:
         """Once a day, fetch renewed Protect licenses from the store (desktop copies)."""
-        store = os.environ.get("BOTPURGE_STORE_URL", "").rstrip("/")
+        store = store_url()
         if not store:
             return 0
         last = self.db.one("SELECT at FROM billing_events WHERE id='refresh-marker'")
@@ -187,7 +189,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
             threading.Thread(target=loop, daemon=True).start()
         yield
 
-    app = FastAPI(title="Bot Purge", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Bot Purge", version=__version__, lifespan=lifespan)
     app.state.svc = svc
 
     # ---- errors ---------------------------------------------------------------------
@@ -255,12 +257,25 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def appeal_page(token: str):
         return FileResponse(WEB / "appeal.html")
 
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    def manifest():
+        return FileResponse(WEB / "manifest.webmanifest", media_type="application/manifest+json")
+
+    @app.get("/sw.js", include_in_schema=False)
+    def service_worker():
+        # Served from the root so it can cover the whole app.
+        return FileResponse(WEB / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
     @app.get("/static/{name}", include_in_schema=False)
     def static(name: str):
         p = (WEB / name).resolve()
         if p.parent != WEB.resolve() or not p.exists():
             raise HTTPException(404)
         return FileResponse(p)
+
+    @app.get("/api/app/version")
+    def app_version():
+        return check_for_update(svc.x_http)
 
     @app.get("/api/health")
     def health():
@@ -280,7 +295,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     @app.get("/api/plans")
     def plans_catalog():
-        store = os.environ.get("BOTPURGE_STORE_URL", "").rstrip("/")
+        store = store_url()
         own = Billing.store_configured()
         return {**catalog(), "store_url": store or ("" if not own else None), "can_buy": bool(store or own)}
 
@@ -347,7 +362,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     def _store(path: str, payload: dict) -> Optional[dict]:
         """Desktop copies forward store requests server-side (the page can't call another origin)."""
-        store = os.environ.get("BOTPURGE_STORE_URL", "").rstrip("/")
+        store = store_url()
         if not store:
             return None
         r = (svc.x_http or httpx.Client(timeout=20)).post(store + path, json=payload)
@@ -1009,11 +1024,16 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     class AdapterIn(BaseModel):
         kind: str
-        secret: str = Field(description="Discourse API key or Discord bot token")
+        secret: str = Field(description="Discourse API key, Discord bot token, Shopify access token or WordPress Application Password")
         base_url: Optional[str] = None
         api_username: Optional[str] = None
         guild_id: Optional[str] = None
         verify_role_id: Optional[str] = None
+        shop: Optional[str] = None
+        api_version: Optional[str] = None
+        username: Optional[str] = None
+        member_role: Optional[str] = None
+        reassign_to: Optional[str] = None
 
     @app.get("/api/purge/adapter")
     def get_adapter(t=Depends(owner)):

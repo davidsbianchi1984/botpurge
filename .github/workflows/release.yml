@@ -21,13 +21,76 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    env:  # secrets can't be tested in a step's "if", so expose only whether they exist
+      HAS_MACOS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_WINDOWS_CERT: ${{ secrets.WINDOWS_CERT_PFX != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e .[desktop] pyinstaller
+
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          v=$(python -c "import botpurge; print(botpurge.__version__)")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} but the app says $v"; exit 1; }
+
+      - name: Bake in the store address and license key
+        shell: bash
+        env:
+          STORE_URL: ${{ vars.STORE_URL }}
+          LICENSE_PUBLIC: ${{ vars.LICENSE_PUBLIC_KEY }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          p = pathlib.Path("botpurge/release.json"); cfg = json.loads(p.read_text())
+          cfg["store_url"] = os.environ.get("STORE_URL", "") or cfg.get("store_url", "")
+          cfg["update_repo"] = os.environ["GITHUB_REPOSITORY"]
+          p.write_text(json.dumps(cfg))
+          if os.environ.get("LICENSE_PUBLIC"):
+              pathlib.Path("botpurge/license_public.txt").write_text(os.environ["LICENSE_PUBLIC"].strip())
+          PY
+
       - run: pyinstaller --noconfirm packaging/botpurge.spec
+
+      # Signing runs only when the certificates are added as repository secrets;
+      # unsigned builds still work but Windows SmartScreen / macOS Gatekeeper warn people.
+      - name: Sign (macOS, Developer ID + notarisation)
+        if: runner.os == 'macOS' && env.HAS_MACOS_CERT == 'true'
+        shell: bash
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          echo "$MACOS_CERT_P12" | base64 --decode > cert.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import cert.p12 -k build.keychain -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+          codesign --force --deep --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "dist/Bot Purge.app"
+          (cd dist && ditto -c -k --keepParent "Bot Purge.app" notarize.zip)
+          xcrun notarytool submit dist/notarize.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "dist/Bot Purge.app"
+          rm -f cert.p12 dist/notarize.zip
+      - name: Sign (Windows, Authenticode)
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_CERT == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          & $signtool.FullName sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 dist\BotPurge.exe
+          Remove-Item cert.pfx
 
       - name: Smoke test (Linux/macOS)
         if: runner.os != 'Windows'

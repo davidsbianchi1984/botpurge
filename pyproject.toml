@@ -1,6 +1,6 @@
 [project]
 name = "botpurge"
-version = "0.1.0"
+version = "1.0.0"
 description = "Bot Purge — flag and remove bots from your friends, followers and following; purge bots platform-wide with appeals"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,7 +31,7 @@ build-backend = "setuptools.build_meta"
 include = ["botpurge*"]
 
 [tool.setuptools.package-data]
-botpurge = ["web/*", "license_public.txt"]
+botpurge = ["web/*", "license_public.txt", "release.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
