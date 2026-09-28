@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS licenses (
 CREATE INDEX IF NOT EXISTS licenses_email ON licenses(email);
 CREATE INDEX IF NOT EXISTS licenses_sub ON licenses(stripe_subscription);
 CREATE TABLE IF NOT EXISTS billing_events (id TEXT PRIMARY KEY, type TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS stripe_prices (plan TEXT PRIMARY KEY, price_id TEXT NOT NULL);   -- each plan's Stripe Price
 
 CREATE TABLE IF NOT EXISTS purchases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

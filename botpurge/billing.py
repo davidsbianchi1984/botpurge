@@ -7,6 +7,12 @@ store's Ed25519 private key. The desktop app checks the signature offline
 against the matching public key, so a key can't be forged or edited, and no
 card details ever touch the app.
 
+Payments run through Stripe **Managed Payments**: Stripe is the merchant of
+record, so it handles sales tax / VAT / GST, fraud screening and customer
+payment support. Each plan is a Stripe Product with a digital-goods tax code
+(created on first use and remembered), and every Checkout Session sets
+``managed_payments[enabled]``.
+
 * Cleanup ($20 once): a license that never expires.
 * Protect ($60/month): a license valid until the paid period ends (plus a few
   days' grace). The app refreshes it from the store once a day; renewals
@@ -38,6 +44,8 @@ from .db import DB
 from .plans import PLANS
 
 STRIPE_API = "https://api.stripe.com/v1"
+STRIPE_VERSION = "2026-02-25.preview"      # Managed Payments needs this API version or later
+TAX_CODE = "txcd_10103100"                 # digital product tax code eligible for Managed Payments
 GRACE = timedelta(days=3)          # a late renewal payment doesn't switch protection off
 PUBLIC_FILE = Path(__file__).with_name("license_public.txt")
 
@@ -170,8 +178,12 @@ class Billing:
         client = self.http or httpx.Client(timeout=20)
         from urllib.parse import urlencode
 
-        r = client.request(method, STRIPE_API + path, content=urlencode(_form(data or {})),
-                           headers={"Authorization": f"Bearer {key}", "Content-Type": "application/x-www-form-urlencoded"})
+        headers = {"Authorization": f"Bearer {key}", "Stripe-Version": STRIPE_VERSION}
+        if method == "GET":
+            r = client.request(method, STRIPE_API + path, params=_form(data or {}), headers=headers)
+        else:
+            r = client.request(method, STRIPE_API + path, content=urlencode(_form(data or {})),
+                               headers=headers | {"Content-Type": "application/x-www-form-urlencoded"})
         if r.status_code >= 400:
             try:
                 msg = r.json()["error"]["message"]
@@ -180,21 +192,46 @@ class Billing:
             raise BillingError(f"Stripe: {msg}")
         return r.json()
 
+    # products and prices
+    def price_for(self, plan: str) -> str:
+        """The Stripe Price for a plan: set in the environment, remembered, found in Stripe, or created there."""
+        env_price = os.environ.get(f"STRIPE_PRICE_{plan.upper()}")
+        if env_price:
+            return env_price
+        row = self.db.one("SELECT price_id FROM stripe_prices WHERE plan=?", (plan,))
+        if row:
+            return row["price_id"]
+        p = PLANS[plan]
+        price_id = None
+        for prod in self._stripe("GET", "/products", {"active": True, "limit": 100}).get("data", []):
+            if (prod.get("metadata") or {}).get("botpurge_plan") == plan and prod.get("default_price"):
+                price = self._stripe("GET", f"/prices/{prod['default_price']}")
+                recurring = (price.get("recurring") or {}).get("interval")
+                if price.get("unit_amount") == p["price_cents"] and recurring == (p["interval"] if p["interval"] == "month" else None):
+                    price_id = price["id"]
+                    break
+        if not price_id:
+            default = {"currency": "usd", "unit_amount": p["price_cents"]}
+            if p["interval"] == "month":
+                default["recurring"] = {"interval": "month"}
+            prod = self._stripe("POST", "/products", {"name": p["name"], "tax_code": os.environ.get("STRIPE_TAX_CODE", TAX_CODE),
+                                                      "metadata": {"botpurge_plan": plan}, "default_price_data": default})
+            price_id = prod["default_price"]
+        self.db.x("INSERT OR REPLACE INTO stripe_prices(plan, price_id) VALUES (?,?)", (plan, price_id))
+        return price_id
+
     # checkout
     def checkout(self, plan: str, email: Optional[str] = None, user_id: Optional[str] = None) -> str:
-        """A Stripe Checkout page for the plan; returns its URL."""
+        """A Stripe Checkout page (Managed Payments) for the plan; returns its URL."""
         if plan not in PLANS or not PLANS[plan]["price_cents"]:
             raise ValueError("choose cleanup or protect")
         p = PLANS[plan]
         base = os.environ.get("BOTPURGE_PUBLIC_URL", "http://127.0.0.1:8000").rstrip("/")
-        price = {"currency": "usd", "unit_amount": p["price_cents"], "product_data": {"name": p["name"]}}
-        env_price = os.environ.get(f"STRIPE_PRICE_{plan.upper()}")   # optional: a Price made in the Stripe dashboard
-        item = {"price": env_price, "quantity": 1} if env_price else \
-            {"price_data": price | ({"recurring": {"interval": "month"}} if p["interval"] == "month" else {}), "quantity": 1}
         meta = {"plan": plan, **({"user_id": user_id} if user_id else {})}
         body = {
             "mode": "subscription" if p["interval"] == "month" else "payment",
-            "line_items": [item],
+            "line_items": [{"price": self.price_for(plan), "quantity": 1}],
+            "managed_payments": {"enabled": True},
             "success_url": f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
             "cancel_url": f"{base}/#plans",
             "client_reference_id": user_id,
@@ -310,7 +347,15 @@ class Billing:
                              "issued": sec.iso()}, priv)
 
     def license_for_session(self, session_id: str) -> Optional[str]:
+        """The key for a finished checkout. If the webhook hasn't arrived yet, ask Stripe directly
+        (the success page polls this), so a buyer never waits on webhook delivery."""
         row = self.db.one("SELECT * FROM licenses WHERE session_id=?", (session_id,))
+        if not row and session_id.startswith("cs_") and os.environ.get("STRIPE_SECRET_KEY"):
+            try:
+                self._paid_checkout(self._stripe("GET", f"/checkout/sessions/{session_id}"))
+            except BillingError:
+                return None
+            row = self.db.one("SELECT * FROM licenses WHERE session_id=?", (session_id,))
         return self._issue(row) if row else None
 
     def refresh(self, token: str) -> str:

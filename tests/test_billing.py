@@ -27,11 +27,27 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setenv("BOTPURGE_PUBLIC_URL", "https://store.example")
     calls = []
 
+    products = []
+
     def stripe(req: httpx.Request):
-        form = parse_qs(req.content.decode())
+        assert req.headers["Stripe-Version"] == billing.STRIPE_VERSION
+        form = parse_qs(req.content.decode()) if req.method == "POST" else {k: [v] for k, v in req.url.params.items()}
         calls.append((req.url.path, form))
-        if req.url.path == "/v1/checkout/sessions":
+        path = req.url.path
+        if path == "/v1/products":
+            if req.method == "GET":
+                return httpx.Response(200, json={"data": products})
+            prod = {"id": f"prod_{len(products)}", "default_price": f"price_{form['metadata[botpurge_plan]'][0]}",
+                    "metadata": {"botpurge_plan": form["metadata[botpurge_plan]"][0]}}
+            products.append(prod)
+            return httpx.Response(200, json=prod)
+        if path == "/v1/checkout/sessions":
             return httpx.Response(200, json={"id": "cs_1", "url": "https://checkout.stripe.com/c/cs_1"})
+        if path == "/v1/checkout/sessions/cs_paid_direct":      # paid, but the webhook hasn't arrived
+            return httpx.Response(200, json={"id": "cs_paid_direct", "payment_status": "paid", "metadata": {"plan": "cleanup"},
+                                             "customer": "cus_9", "payment_intent": "pi_9", "customer_details": {"email": "fast@example.com"}})
+        if path.startswith("/v1/checkout/sessions/"):
+            return httpx.Response(200, json={"id": path.rsplit("/", 1)[-1], "payment_status": "unpaid", "metadata": {"plan": "protect"}})
         if req.url.path == "/v1/billing_portal/sessions":
             return httpx.Response(200, json={"url": "https://billing.stripe.com/p/1"})
         return httpx.Response(404, json={"error": {"message": "nope"}})
@@ -85,15 +101,24 @@ def test_checkout_webhook_and_license_on_the_store(store):
     client, calls = store
     r = client.get("/buy/protect?email=buyer@example.com", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"].startswith("https://checkout.stripe.com/")
+    created = next(f for p, f in calls if p == "/v1/products" and "name" in f)
+    assert created["tax_code"] == [billing.TAX_CODE] and created["default_price_data[unit_amount]"] == ["6000"]
+    assert created["default_price_data[recurring][interval]"] == ["month"]
     path, form = calls[-1]
-    assert form["mode"] == ["subscription"] and form["line_items[0][price_data][unit_amount]"] == ["6000"]
-    assert form["line_items[0][price_data][recurring][interval]"] == ["month"] and form["metadata[plan]"] == ["protect"]
+    assert form["mode"] == ["subscription"] and form["line_items[0][price]"] == ["price_protect"]
+    assert form["managed_payments[enabled]"] == ["true"] and form["metadata[plan]"] == ["protect"]
     assert form["success_url"] == ["https://store.example/billing/success?session_id={CHECKOUT_SESSION_ID}"]
     client.post("/api/billing/checkout", json={"plan": "cleanup"})
-    assert calls[-1][1]["mode"] == ["payment"] and calls[-1][1]["line_items[0][price_data][unit_amount]"] == ["2000"]
+    assert calls[-1][1]["mode"] == ["payment"] and calls[-1][1]["line_items[0][price]"] == ["price_cleanup"]
+    n = sum(1 for p, f in calls if p == "/v1/products" and "name" in f)
+    client.get("/buy/protect", follow_redirects=False)
+    assert sum(1 for p, f in calls if p == "/v1/products" and "name" in f) == n        # the price is remembered, not re-created
     assert client.post("/api/billing/checkout", json={"plan": "free"}).status_code == 400
 
     assert client.get("/api/billing/license?session_id=cs_1").status_code == 404      # not paid yet
+    # Paid but no webhook yet: the success page's poll asks Stripe and issues the key.
+    fast = client.get("/api/billing/license?session_id=cs_paid_direct").json()["license"]
+    assert billing.verify_license(fast)["email"] == "fast@example.com"
     assert hook(client, paid(), secret="wrong").status_code == 400                  # forged webhook
     assert hook(client, paid()).json()["handled"]
     assert hook(client, paid()).json()["duplicate"]                                 # Stripe retries are ignored
