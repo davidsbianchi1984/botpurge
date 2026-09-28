@@ -135,7 +135,7 @@
           <label><input type="checkbox" id="selAll"> Select all</label>
           <span class="muted small" id="selCount"></span>
           <span style="flex:1"></span>
-          <button class="primary" id="removeSel" disabled>Remove selected</button>
+          <button class="primary" id="removeSel" disabled title="Remove, block or report the selected accounts">Remove, block or report…</button>
         </div>
         <div class="table-wrap"><table class="stack">
           <thead><tr><th></th><th>Account</th><th>Score</th><th>Why</th><th class="hide-sm">Connected</th><th></th></tr></thead>
@@ -175,7 +175,7 @@
     <div data-view="log" class="hidden">
       <div class="panel">
         <div class="row"><h2 style="margin:0">History</h2><span style="flex:1"></span>
-          <select id="logEvent"><option value="">All events</option><option value="removed">Removed</option><option value="failed">Failed</option><option value="flagged">Flagged</option><option value="whitelisted">Whitelisted</option><option value="readded">Re-added</option></select></div>
+          <select id="logEvent"><option value="">All events</option><option value="removed">Removed</option><option value="blocked">Blocked</option><option value="reported">Reported</option><option value="failed">Failed</option><option value="flagged">Flagged</option><option value="whitelisted">Whitelisted</option><option value="readded">Re-added</option></select></div>
         <p class="small muted">Removed someone by mistake? Open their profile, add them back, then press “I re-added them” so they're never flagged again.</p>
         <div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th><th>Account</th><th class="hide-sm">Platform</th><th></th></tr></thead><tbody id="logRows"></tbody></table></div>
       </div>
@@ -266,11 +266,20 @@
   <form method="dialog">
     <h2 id="cTitle" style="margin-top:0"></h2>
     <p id="cBody"></p>
-    <label class="f">How to remove
+    <fieldset class="f" id="cActions" style="border:0;padding:0;margin:0 0 12px">
+      <legend class="small muted">What to do (pick any)</legend>
+      <label><input type="checkbox" id="cDoRemove" checked> <b>Remove</b>: unfriend, remove follower or unfollow</label><br>
+      <label><input type="checkbox" id="cDoBlock"> <b>Block</b>: they can't find, follow or message you again (also removes them)</label><br>
+      <label><input type="checkbox" id="cDoReport"> <b>Report</b> to the platform (Likely bots only, once each)</label>
+    </fieldset>
+    <label class="f hidden" id="cReasonWrap">Report as
+      <select id="cReason"><option value="spam">Spam</option><option value="fake">Fake account</option><option value="impersonation">Pretending to be someone</option><option value="scam">Scam or fraud</option></select>
+    </label>
+    <label class="f">How to do it
       <select id="cMode"></select>
     </label>
     <p class="small muted" id="cModeHelp"></p>
-    <div class="row end"><button value="cancel">Cancel</button><button class="primary" value="ok" id="cOk">Start removal</button></div>
+    <div class="row end"><button value="cancel">Cancel</button><button class="primary" value="ok" id="cOk">Start</button></div>
   </form>
 </dialog>
 
@@ -610,22 +619,47 @@ async function feedback(k, isBot) {
     toast(isBot ? "Marked as a bot — thanks, your model learned from this." : "Whitelisted as a real person — they won't be flagged again."); loadFlags(); }
   catch (e) { toast(e.message); }
 }
-$("removeSel").onclick = async () => {
+$("removeSel").onclick = () => startJobs();
+async function startJobs() {
   const sel = state.rows.filter(r => state.selected.has(keyOf(r)));
   const byPlatform = {}; sel.forEach(r => (byPlatform[r.platform] ||= []).push(r));
   for (const [p, rows] of Object.entries(byPlatform)) {
     const { modes } = await api(`/api/removals/modes/${p}`);
-    const n = rows.length;
+    const n = rows.length, bots = rows.filter(r => r.label === "likely_bot").length;
     const counts = {}; rows.forEach(r => counts[r.direction] = (counts[r.direction] || 0) + 1);
     const verbs = Object.entries(counts).map(([d, c]) => `${c} ${d === "friend" ? "unfriend" : d === "follower" ? "remove follower" : "unfollow"}`).join(", ");
-    $("cTitle").textContent = `Remove ${n} account${n > 1 ? "s" : ""} on ${PLATFORM_NAMES[p]}?`;
-    $("cBody").textContent = `This will ${verbs}. You can review progress in the Removal queue and pause any time.`;
-    $("cMode").innerHTML = modes.map(m => `<option value="${m}">${MODE_NAMES[m]}</option>`).join("");
-    $("cModeHelp").textContent = MODE_HELP[modes[0]];
+    $("cTitle").textContent = `${n} account${n > 1 ? "s" : ""} on ${PLATFORM_NAMES[p]}`;
+    $("cDoRemove").checked = true; $("cDoBlock").checked = false; $("cDoReport").checked = false;
+    $("cDoReport").disabled = !bots;
+    const refresh = () => {
+      const block = $("cDoBlock").checked, report = $("cDoReport").checked;
+      $("cDoRemove").disabled = block; if (block) $("cDoRemove").checked = true;
+      $("cReasonWrap").classList.toggle("hidden", !report);
+      const parts = [];
+      if (report) parts.push(`report ${bots} Likely bot${bots === 1 ? "" : "s"}` + (bots < n ? ` (the other ${n - bots} aren't clear enough bots to report)` : ""));
+      if (block) parts.push(`block all ${n}, which also removes them`); else if ($("cDoRemove").checked) parts.push(verbs);
+      $("cBody").textContent = parts.length ? `This will ${parts.join(", then ")}. Review progress in the Removal queue and pause any time.` : "Pick at least one action.";
+      $("cOk").disabled = !parts.length;
+      const usable = block || report ? modes.filter(m => m !== "one_click") : modes;   // X's API only removes
+      const keep = $("cMode").value;
+      $("cMode").innerHTML = usable.map(m => `<option value="${m}">${MODE_NAMES[m]}</option>`).join("");
+      if (usable.includes(keep)) $("cMode").value = keep;
+      $("cModeHelp").textContent = MODE_HELP[$("cMode").value];
+    };
+    ["cDoRemove", "cDoBlock", "cDoReport"].forEach(id => $(id).onchange = refresh);
+    $("cMode").innerHTML = ""; refresh();
     $("cMode").onchange = () => $("cModeHelp").textContent = MODE_HELP[$("cMode").value];
     const dlg = $("confirmDlg"); dlg.showModal();
     const result = await new Promise(res => dlg.addEventListener("close", () => res(dlg.returnValue), { once: true }));
     if (result !== "ok") continue;
+    const block = $("cDoBlock").checked, report = $("cDoReport").checked, remove = !block && $("cDoRemove").checked;
+    const accounts = [];
+    for (const r of rows) {   // report first (while the profile is still reachable), then block or remove
+      if (report && r.label === "likely_bot") accounts.push({ account_id: r.account_id, direction: r.direction, action: "report", reason: $("cReason").value });
+      if (block) accounts.push({ account_id: r.account_id, direction: r.direction, action: "block" });
+      else if (remove) accounts.push({ account_id: r.account_id, direction: r.direction });
+    }
+    if (!accounts.length) continue;
     try {
       if (!(await api("/api/me/plan", { headers: auth() })).features.includes("remove")) { toast("Removing threats is part of Bot Purge Cleanup."); switchTab("plans"); return; }
       if ($("cMode").value === "agent") {
@@ -635,18 +669,18 @@ $("removeSel").onclick = async () => {
           await api(`/api/agent/consent/${p}`, { method: "POST", headers: auth() });
         }
       }
-      const job = await api("/api/removals", { method: "POST", headers: auth(), body: { platform: p, mode: $("cMode").value, accounts: rows.map(r => ({ account_id: r.account_id, direction: r.direction })) } });
+      const job = await api("/api/removals", { method: "POST", headers: auth(), body: { platform: p, mode: $("cMode").value, accounts } });
       state.jobId = job.id; switchTab("queue");
     } catch (e) { toast(e.message); }
   }
-};
+}
 
 // ---------- removal queue ----------
 async function loadJobs() {
   const jobs = await api("/api/removals", { headers: auth() });
   $("jobList").innerHTML = jobs.length ? `<table><thead><tr><th>Started</th><th>Platform</th><th>Mode</th><th>State</th><th></th></tr></thead><tbody>` +
     jobs.map(j => `<tr><td>${fmtDate(j.created_at)}</td><td>${PLATFORM_NAMES[j.platform]}</td><td>${MODE_NAMES[j.mode]}</td><td><span class="chip">${esc(j.state)}</span></td><td><button data-job="${j.id}">Open</button></td></tr>`).join("") + "</tbody></table>"
-    : `<p class="muted">No removals yet. Select accounts in Flagged accounts and press Remove selected.</p>`;
+    : `<p class="muted">No removals yet. Select accounts in Flagged accounts and press "Remove, block or report".</p>`;
   document.querySelectorAll("[data-job]").forEach(b => b.onclick = () => { state.jobId = b.dataset.job; loadJob(); });
   if (state.jobId) loadJob();
 }
@@ -740,7 +774,7 @@ $("logEvent").onchange = loadLog;
 async function loadLog() {
   const ev = $("logEvent").value;
   const rows = await api("/api/undo-log" + (ev ? "?event=" + ev : ""), { headers: auth() });
-  $("logRows").innerHTML = rows.map(r => `<tr><td class="small">${fmtDate(r.at)}</td><td><span class="chip ${r.event === "removed" ? "good" : r.event === "failed" ? "bad" : ""}">${esc(r.event)}</span></td>
+  $("logRows").innerHTML = rows.map(r => `<tr><td class="small">${fmtDate(r.at)}</td><td><span class="chip ${["removed", "blocked", "reported"].includes(r.event) ? "good" : r.event === "failed" ? "bad" : ""}">${esc(r.event)}</span></td>
     <td>${esc(r.name || (r.handle ? "@" + r.handle : r.account_id))}${r.profile_url ? ` · <a target="_blank" rel="noopener" href="${esc(r.profile_url)}">profile</a>` : ""}</td><td class="hide-sm">${esc(PLATFORM_NAMES[r.platform])} · ${esc(r.direction)}</td>
     <td>${r.event === "removed" ? `<button class="small" data-re="${esc(r.platform)}|${esc(r.direction)}|${esc(r.account_id)}">I re-added them</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">Nothing yet.</td></tr>`;
   document.querySelectorAll("[data-re]").forEach(b => b.onclick = async () => { const [p, d, a] = b.dataset.re.split("|"); await api("/api/undo/readded", { method: "POST", body: { platform: p, direction: d, account_id: a }, headers: auth() }); toast("Whitelisted — they won't be flagged again."); loadLog(); });

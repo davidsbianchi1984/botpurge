@@ -29,6 +29,7 @@ BLOCK_SIGNS = re.compile(
 LOGIN_SIGNS = re.compile(r"(log ?in|sign ?in)\s+(to|with)|forgot (your )?password|create new account", re.I)
 
 HOURLY_CAP = {"instagram": 30, "tiktok": 30, "facebook": 25, "linkedin": 20, "x": 40}
+REPORT_HOURLY_CAP = 10   # reports are slower on purpose: mass-reporting looks (and can be) abusive
 
 CONSENT_TEXT = (
     "The done-for-you agent clicks Remove, Unfollow and Unfriend for you in your own browser. "
@@ -74,6 +75,13 @@ class Executor:
         self.timeout = timeout_ms
 
     def _locate(self, page, s: dict):
+        if s.get("any"):
+            # Any of several labels ("Options" / "More" / "…"): the first one on screen wins.
+            for label in s["any"]:
+                loc = self._locate(page, {k: v for k, v in s.items() if k != "any"} | {"text": label})
+                if loc.count() and loc.is_visible():
+                    return loc
+            return self._locate(page, {k: v for k, v in s.items() if k != "any"} | {"text": s["any"][0]})
         scope = page
         if s.get("near"):
             row = page.locator("li, div[role=listitem], div[role=row], tr, article").filter(has_text=s["near"])
@@ -103,45 +111,145 @@ class Executor:
             return "login"
         return None
 
+    # ---- keyboard ------------------------------------------------------------------
+    KEY_NAMES = {"ctrl": "Control", "control": "Control", "cmd": "Meta", "command": "Meta", "win": "Meta", "meta": "Meta",
+                 "opt": "Alt", "option": "Alt", "alt": "Alt", "shift": "Shift", "esc": "Escape", "escape": "Escape",
+                 "enter": "Enter", "return": "Enter", "tab": "Tab", "space": "Space", "del": "Delete", "delete": "Delete",
+                 "backspace": "Backspace", "up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight",
+                 "pageup": "PageUp", "pagedown": "PageDown", "home": "Home", "end": "End"}
+
+    @classmethod
+    def key_combo(cls, keys: str) -> str:
+        """'ctrl + k' -> 'Control+k', 'Cmd+Shift+P' -> 'Meta+Shift+P', 'esc' -> 'Escape'."""
+        parts = [p.strip() for p in re.split(r"\s*\+\s*", keys.strip()) if p.strip()]
+        out = []
+        for p in parts:
+            low = p.lower()
+            if low in cls.KEY_NAMES:
+                out.append(cls.KEY_NAMES[low])
+            elif re.fullmatch(r"f\d{1,2}", low):
+                out.append(low.upper())
+            else:
+                out.append(p if len(p) > 1 else p.lower() if len(parts) > 1 else p)
+        return "+".join(out)
+
+    def _typing(self, loc_or_keyboard, text: str) -> None:
+        """Type like a person: one key at a time with small uneven gaps."""
+        for ch in text:
+            loc_or_keyboard.type(ch, delay=random.uniform(40, 130))
+
     def run(self, page, program: list[dict]) -> StepResult:
         res = StepResult(ok=False)
+        cur = page
+        history = [page]
+        # A step that accepts browser pop-ups ("Are you sure?") must be armed before the click that opens it.
+        if any(s.get("op") == "dialog" for s in program):
+            accept = next(s for s in program if s.get("op") == "dialog").get("action", "accept") == "accept"
+            page.context.on("dialog", lambda d: d.accept() if accept else d.dismiss())
         for i, s in enumerate(program):
             try:
                 op = s["op"]
                 if op == "goto":
-                    page.goto(s["url"], wait_until="domcontentloaded")
+                    cur.goto(s["url"], wait_until="domcontentloaded")
                 elif op == "wait":
                     self.pacing.sleep(float(s.get("seconds", 2)))
-                elif op in ("click", "fill", "expect"):
-                    loc = self._locate(page, s)
-                    try:
-                        loc.wait_for(state="visible", timeout=self.timeout)
-                    except Exception:
-                        alt = self.planner(page.locator("body").inner_text()[:6000], s) if self.planner else None
-                        if not alt:
-                            raise
-                        res.log.append(f"step {i}: planner replaced {s} with {alt}")
-                        s = alt
-                        loc = self._locate(page, s)
-                        loc.wait_for(state="visible", timeout=self.timeout)
-                    if op == "click":
-                        loc.click()
-                    elif op == "fill":
-                        loc.fill(s["value"])
+                elif op == "dialog":
+                    pass  # armed above
+                elif op == "press":
+                    combo = self.key_combo(s["keys"])
+                    if s.get("text") or s.get("role") or s.get("placeholder"):
+                        self._locate(cur, s).press(combo)
                     else:
-                        res.verified = True
+                        cur.keyboard.press(combo)
+                elif op == "type":
+                    if s.get("placeholder") or s.get("label"):
+                        loc = cur.get_by_placeholder(s["placeholder"]) if s.get("placeholder") else cur.get_by_label(s["label"])
+                        loc.first.click()
+                    self._typing(cur.keyboard, s["value"])
+                elif op == "scroll":
+                    target = s.get("until")
+                    for _ in range(int(s.get("max", 15))):
+                        if target and cur.get_by_text(target).first.is_visible():
+                            break
+                        cur.mouse.wheel(0, 700 if s.get("direction", "down") == "down" else -700)
+                        self.pacing.sleep(random.uniform(0.3, 0.9))
+                    else:
+                        if target:
+                            raise RuntimeError(f"scrolled but never saw '{target}'")
+                elif op == "switch":
+                    pages = cur.context.pages
+                    if s.get("to", "new") == "new":
+                        deadline = time.time() + self.timeout / 1000
+                        while len(cur.context.pages) <= len(history) and time.time() < deadline:
+                            cur.wait_for_timeout(100)
+                        pages = cur.context.pages
+                        if len(pages) <= len(history):
+                            raise RuntimeError("no new window opened")
+                        cur = pages[-1]
+                        history.append(cur)
+                    else:
+                        cur = history[0]
+                    cur.bring_to_front()
+                    cur.wait_for_load_state("domcontentloaded")
+                elif op == "close":
+                    closing = cur
+                    history.remove(closing) if closing in history and len(history) > 1 else None
+                    cur = history[-1]
+                    closing.close()
+                elif op in ("click", "fill", "expect", "hover", "select"):
+                    if op == "select" and s.get("label"):
+                        cur.get_by_label(s["label"]).first.select_option(label=s["option"])
+                    else:
+                        if op == "select":
+                            choices = s.get("any") or [s["option"]]
+                            loc = None
+                            for opt in choices:
+                                cand = cur.get_by_role("option", name=opt).or_(cur.get_by_role("radio", name=opt)) \
+                                    .or_(cur.get_by_role("menuitem", name=opt))
+                                if cand.count():
+                                    loc = cand.first
+                                    break
+                            if loc is None:
+                                loc = self._locate(cur, {"any": choices})
+                        else:
+                            loc = self._locate(cur, s)
+                        try:
+                            loc.wait_for(state="visible", timeout=self.timeout)
+                        except Exception:
+                            alt = self.planner(cur.locator("body").inner_text()[:6000], s) if self.planner else None
+                            if not alt:
+                                raise
+                            res.log.append(f"step {i}: planner replaced {s} with {alt}")
+                            s = alt
+                            loc = self._locate(cur, s)
+                            loc.wait_for(state="visible", timeout=self.timeout)
+                        if op in ("click", "select"):
+                            loc.click()
+                        elif op == "hover":
+                            loc.hover()
+                        elif op == "fill":
+                            loc.click()
+                            loc.fill("")
+                            self._typing(loc, s["value"])
+                        else:
+                            res.verified = True
+                else:
+                    raise ValueError(f"unknown step {op}")
                 res.log.append(f"step {i}: {op} ok")
             except Exception as exc:
-                why = self._pushback(page)
-                res.failed_step, res.error = i, (why or f"step {i} ({s.get('op')} {s.get('text') or s.get('name') or ''}) failed: {str(exc)[:150]}")
+                if s.get("optional") and not self._pushback(cur):
+                    res.log.append(f"step {i}: optional {op} skipped (not on this screen)")
+                    continue
+                why = self._pushback(cur)
+                res.failed_step, res.error = i, (why or f"step {i} ({s.get('op')} {s.get('text') or s.get('name') or s.get('keys') or s.get('option') or ''}) failed: {str(exc)[:150]}")
                 res.blocked, res.needs_login = bool(why and why.startswith("blocked")), why == "login"
                 return res
-            why = self._pushback(page)
+            why = self._pushback(cur)
             if why:
                 res.failed_step, res.error = i, why
                 res.blocked, res.needs_login = why.startswith("blocked"), why == "login"
                 return res
-            if s["op"] != "wait" and i < len(program) - 1:
+            if s["op"] not in ("wait", "dialog") and i < len(program) - 1:
                 self.pacing.step()
         res.ok = True
         return res
@@ -170,7 +278,7 @@ class AgentService:
         return bool(self.db.one("SELECT 1 FROM agent_consents WHERE user_id=? AND platform=?", (user_id, platform)))
 
     # running -------------------------------------------------------------------------
-    def _done_this_hour(self, user_id: str, platform: str) -> int:
+    def _done_this_hour(self, user_id: str, platform: str, reports: bool = False) -> int:
         from datetime import timedelta
 
         from .. import security as sec
@@ -178,7 +286,8 @@ class AgentService:
         since = sec.iso(sec.now() - timedelta(hours=1))
         return self.db.one(
             "SELECT COUNT(*) n FROM removal_items i JOIN removal_jobs j ON j.id=i.job_id WHERE j.user_id=? AND i.platform=? "
-            "AND i.mode='agent' AND i.status IN ('removed','pending','failed') AND i.updated_at>=?", (user_id, platform, since))["n"]
+            "AND i.mode='agent' AND i.status IN ('removed','blocked','pending','failed','reported') AND i.updated_at>=?"
+            + (" AND i.action='report'" if reports else ""), (user_id, platform, since))["n"]
 
     def run_job(self, user_id: str, job_id: str, page, executor: Optional[Executor] = None,
                 custom_steps: Optional[dict] = None, own_followers_url: str = "", max_items: int = 1000) -> dict:
@@ -203,8 +312,11 @@ class AgentService:
                 self._alert(user_id, f"Paused at the hourly limit for {job['platform']} to keep your account safe. It resumes on its own.")
                 return {**self.removal.job(user_id, job_id), "paused_for": "hourly_cap"}
             prog = program_for(it["platform"], it["action"], (custom_steps or {}).get(it["action"]))
+            if it["action"] == "report" and self._done_this_hour(user_id, job["platform"], reports=True) >= REPORT_HOURLY_CAP:
+                self._alert(user_id, f"Paused at {REPORT_HOURLY_CAP} reports an hour on {job['platform']}. It resumes on its own.")
+                return {**self.removal.job(user_id, job_id), "paused_for": "hourly_cap"}
             values = {"profile_url": it.get("profile_url") or "", "handle": it.get("handle") or it["account_id"],
-                      "own_followers_url": own_followers_url or it.get("profile_url") or ""}
+                      "own_followers_url": own_followers_url or it.get("profile_url") or "", "reason": it.get("reason") or "spam"}
             res = ex.run(page, fill(prog, values))
             if res.ok:
                 status, err = ("removed" if res.verified else "pending"), None

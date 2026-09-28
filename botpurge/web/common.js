@@ -50,8 +50,8 @@ function fmtDate(s) {
 
 const LABELS = { likely_bot: "Likely bot", suspicious: "Suspicious", low_confidence: "Low confidence", looks_real: "Looks real" };
 const PLATFORM_NAMES = { x: "X", facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok", linkedin: "LinkedIn" };
-const ACTION_NAMES = { unfriend: "Unfriend", remove_follower: "Remove follower", unfollow: "Unfollow" };
+const ACTION_NAMES = { unfriend: "Unfriend", remove_follower: "Remove follower", unfollow: "Unfollow", block: "Block", report: "Report" };
 const PLATFORM_ACTIONS = {
-  x: ["remove_follower", "unfollow"], facebook: ["unfriend", "remove_follower", "unfollow"],
-  instagram: ["remove_follower", "unfollow"], tiktok: ["remove_follower", "unfollow"], linkedin: ["unfriend", "unfollow"],
+  x: ["remove_follower", "unfollow", "block", "report"], facebook: ["unfriend", "remove_follower", "unfollow", "block", "report"],
+  instagram: ["remove_follower", "unfollow", "block", "report"], tiktok: ["remove_follower", "unfollow", "block", "report"], linkedin: ["unfriend", "unfollow", "block", "report"],
 };

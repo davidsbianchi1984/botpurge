@@ -23,6 +23,7 @@ from .instructions import PLATFORM_ACTIONS
 from .personal import NotFound, PersonalService
 
 ACTION_FOR = {"friend": "unfriend", "follower": "remove_follower", "following": "unfollow"}
+REPORT_REASONS = ("spam", "fake", "impersonation", "scam")
 
 # Seconds between items. X: unfollow is limited to ~50 per 15 minutes per user.
 PACE = {"one_click": 20.0, "assisted": 25.0, "guided": 0.0, "agent": 0.0}   # the agent paces itself
@@ -53,26 +54,44 @@ class RemovalService:
             raise ValueError(f"At most {MAX_BATCH[mode]} accounts per {mode} batch")
         items = []
         for a in accounts:
-            f = self.db.one("SELECT status FROM flags WHERE user_id=? AND platform=? AND account_id=? AND direction=?",
+            f = self.db.one("SELECT status, label, reasons_json FROM flags WHERE user_id=? AND platform=? AND account_id=? AND direction=?",
                             (user_id, platform, a["account_id"], a["direction"]))
             if not f:
                 raise NotFound(f"{a['account_id']} is not in your {platform} lists")
             if f["status"] == "whitelisted":
                 raise ValueError(f"{a['account_id']} is whitelisted as a real person; remove it from the whitelist first")
-            action = ACTION_FOR[a["direction"]]
+            action = a.get("action") or ACTION_FOR[a["direction"]]
             if action not in PLATFORM_ACTIONS[platform]:
                 raise ValueError(f"{platform} doesn't support {action}")
-            items.append((a["account_id"], a["direction"], action))
+            reason = None
+            if action == "block" and mode == "one_click":
+                raise ValueError("Blocking can't go through X's API; use assisted, guided or done-for-you")
+            if action == "report":
+                reason = a.get("reason") or "spam"
+                if reason not in REPORT_REASONS:
+                    raise ValueError(f"reason must be one of {REPORT_REASONS}")
+                if mode == "one_click":
+                    raise ValueError("Reports can't go through X's API; use assisted, guided or done-for-you")
+                # Reporting real people in bulk is abuse, so only clear bots can be reported, once each.
+                if f["label"] != "likely_bot" and '"user_confirmed"' not in (f["reasons_json"] or ""):
+                    raise ValueError(f"Only accounts rated Likely bot (or that you marked as a bot) can be reported ({a['account_id']})")
+                if self.db.one("SELECT 1 FROM undo_log WHERE user_id=? AND platform=? AND account_id=? AND event='reported'",
+                               (user_id, platform, a["account_id"])):
+                    raise ValueError(f"You've already reported {a['account_id']}")
+            items.append((a["account_id"], a["direction"], action, reason))
+        if sum(1 for x in items if x[2] == "report") > 50:
+            raise ValueError("At most 50 reports per batch")
         job_id = sec.new_id("j_")
         now = sec.iso()
         with self.db.tx() as tx:
             tx.execute("INSERT INTO removal_jobs(id,user_id,platform,mode,state,created_at,pace_seconds,next_at) VALUES (?,?,?,?,?,?,?,?)",
                        (job_id, user_id, platform, mode, "running", now, PACE[mode], now))
-            for i, (aid, direction, action) in enumerate(items):
-                tx.execute("INSERT INTO removal_items(job_id,idx,platform,account_id,direction,action,mode,updated_at)"
-                           " VALUES (?,?,?,?,?,?,?,?)", (job_id, i, platform, aid, direction, action, mode, now))
-                tx.execute("UPDATE flags SET status='pending' WHERE user_id=? AND platform=? AND account_id=? AND direction=?",
-                           (user_id, platform, aid, direction))
+            for i, (aid, direction, action, reason) in enumerate(items):
+                tx.execute("INSERT INTO removal_items(job_id,idx,platform,account_id,direction,action,mode,updated_at,reason)"
+                           " VALUES (?,?,?,?,?,?,?,?,?)", (job_id, i, platform, aid, direction, action, mode, now, reason))
+                if action != "report":  # reporting doesn't remove them from your lists
+                    tx.execute("UPDATE flags SET status='pending' WHERE user_id=? AND platform=? AND account_id=? AND direction=?",
+                               (user_id, platform, aid, direction))
         return self.job(user_id, job_id)
 
     def job(self, user_id: str, job_id: str) -> dict:
@@ -105,8 +124,9 @@ class RemovalService:
                     if it["status"] in ("queued", "opened"):
                         tx.execute("UPDATE removal_items SET status='skipped', updated_at=? WHERE job_id=? AND idx=?",
                                    (sec.iso(), job_id, it["idx"]))
-                        tx.execute("UPDATE flags SET status='active' WHERE user_id=? AND platform=? AND account_id=? AND direction=?",
-                                   (user_id, it["platform"], it["account_id"], it["direction"]))
+                        if it["action"] != "report":
+                            tx.execute("UPDATE flags SET status='active' WHERE user_id=? AND platform=? AND account_id=? AND direction=?",
+                                       (user_id, it["platform"], it["account_id"], it["direction"]))
         return self.job(user_id, job_id)
 
     # ---- one-click (X) -----------------------------------------------------------
@@ -215,13 +235,28 @@ class RemovalService:
     # ---- internals ------------------------------------------------------------------------
 
     def _finish_item(self, user_id: str, job_id: str, it: dict, status: str, error: Optional[str], mode: str) -> None:
+        if it["action"] == "report":
+            # A report is done once submitted; the account stays in your lists (remove it too if you like).
+            status = "reported" if status in ("removed", "pending") else status
+            with self.db.tx() as tx:
+                tx.execute("UPDATE removal_items SET status=?, error=?, mode=?, updated_at=? WHERE job_id=? AND idx=?",
+                           (status, error, mode, sec.iso(), job_id, it["idx"]))
+                if status == "reported":
+                    f = tx.execute("SELECT * FROM flags WHERE user_id=? AND platform=? AND account_id=? AND direction=?",
+                                   (user_id, it["platform"], it["account_id"], it["direction"])).fetchone()
+                    if f:
+                        PersonalService._log(tx, user_id, "reported", f)
+            return
         flag_status = {"removed": "removed", "failed": "failed", "pending": "pending", "skipped": "active", "queued": "pending"}[status]
+        if it["action"] == "block" and status in ("removed", "pending"):
+            # Blocking also cuts the connection, so the account leaves your lists (the next scan confirms it if unverified).
+            status = "blocked"
         with self.db.tx() as tx:
             tx.execute("UPDATE removal_items SET status=?, error=?, mode=?, updated_at=? WHERE job_id=? AND idx=?",
                        (status, error, mode, sec.iso(), job_id, it["idx"]))
             tx.execute("UPDATE flags SET status=? WHERE user_id=? AND platform=? AND account_id=? AND direction=?",
                        (flag_status, user_id, it["platform"], it["account_id"], it["direction"]))
-            if status in ("removed", "failed"):
+            if status in ("removed", "blocked", "failed"):
                 f = tx.execute("SELECT * FROM flags WHERE user_id=? AND platform=? AND account_id=? AND direction=?",
                                (user_id, it["platform"], it["account_id"], it["direction"])).fetchone()
                 if f:

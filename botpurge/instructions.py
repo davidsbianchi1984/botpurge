@@ -15,15 +15,15 @@ from pydantic import BaseModel, Field, field_validator
 
 PLATFORMS = ("x", "facebook", "instagram", "tiktok", "linkedin")
 DEVICES = ("web", "ios", "android")
-ACTIONS = ("unfriend", "remove_follower", "unfollow")
+ACTIONS = ("unfriend", "remove_follower", "unfollow", "block", "report")
 
 # Which actions make sense on which platform.
 PLATFORM_ACTIONS = {
-    "x": ("remove_follower", "unfollow"),
-    "facebook": ("unfriend", "remove_follower", "unfollow"),
-    "instagram": ("remove_follower", "unfollow"),
-    "tiktok": ("remove_follower", "unfollow"),
-    "linkedin": ("unfriend", "unfollow"),
+    "x": ("remove_follower", "unfollow", "block", "report"),
+    "facebook": ("unfriend", "remove_follower", "unfollow", "block", "report"),
+    "instagram": ("remove_follower", "unfollow", "block", "report"),
+    "tiktok": ("remove_follower", "unfollow", "block", "report"),
+    "linkedin": ("unfriend", "unfollow", "block", "report"),
 }
 
 
@@ -131,6 +131,56 @@ _BUILTIN: dict[tuple[str, str], dict[str, list[str]]] = {
         "web": ["{open}.", "Click 'More', then 'Unfollow'.", "Confirm 'Unfollow'."],
         "ios": ["{open}.", "Tap '...', then 'Unfollow'.", "Confirm."],
         "android": ["{open}.", "Tap '...', then 'Unfollow'.", "Confirm."],
+    },
+    ("x", "block"): {
+        "web": ["{open}.", "Click the ... (More) button next to Follow.", "Choose 'Block @handle', then confirm Block."],
+        "ios": ["{open}.", "Tap the ... button at the top.", "Tap 'Block @handle', then confirm Block."],
+        "android": ["{open}.", "Tap the ⋮ button at the top.", "Tap 'Block', then confirm Block."],
+    },
+    ("instagram", "block"): {
+        "web": ["{open}.", "Click ... (Options) next to their name.", "Click Block, choose whether to block new accounts they make too, then confirm Block."],
+        "ios": ["{open}.", "Tap ... at the top right.", "Tap Block, choose whether to block new accounts they make too, then confirm Block."],
+        "android": ["{open}.", "Tap ⋮ at the top right.", "Tap Block, choose whether to block new accounts they make too, then confirm Block."],
+    },
+    ("tiktok", "block"): {
+        "web": ["{open}.", "Click the ... (or Share) button on their profile.", "Click Block, then confirm Block."],
+        "ios": ["{open}.", "Tap the ... or share arrow at the top.", "Tap Block, then confirm Block."],
+        "android": ["{open}.", "Tap the ... or share arrow at the top.", "Tap Block, then confirm Block."],
+    },
+    ("facebook", "block"): {
+        "web": ["{open}.", "Click ... under their cover photo.", "Choose Block, then confirm Block."],
+        "ios": ["{open}.", "Tap ... on their profile.", "Tap Block, then confirm Block."],
+        "android": ["{open}.", "Tap ... on their profile.", "Tap Block, then confirm Block."],
+    },
+    ("linkedin", "block"): {
+        "web": ["{open}.", "Click More under their headline.", "Choose 'Report / Block', then Block, and confirm Block."],
+        "ios": ["{open}.", "Tap ... on their profile.", "Tap 'Report or block', then Block, and confirm."],
+        "android": ["{open}.", "Tap ... on their profile.", "Tap 'Report or block', then Block, and confirm."],
+    },
+    ("x", "report"): {
+        "web": ["{open}.", "Click the ... (More) button next to Follow.", "Choose 'Report @handle', pick the reason (spam, fake account, impersonation) and follow the screens to submit."],
+        "ios": ["{open}.", "Tap the ... button at the top.", "Tap 'Report @handle', choose the reason, and submit."],
+        "android": ["{open}.", "Tap the ⋮ button at the top.", "Tap 'Report', choose the reason, and submit."],
+    },
+    ("instagram", "report"): {
+        "web": ["{open}.", "Click ... (Options) next to their name.", "Click Report, then 'Report account', choose the reason (spam, fake, pretending to be someone) and submit."],
+        "ios": ["{open}.", "Tap ... at the top right.", "Tap Report, choose the reason, and follow the screens to submit."],
+        "android": ["{open}.", "Tap ⋮ at the top right.", "Tap Report, choose the reason, and follow the screens to submit."],
+    },
+    ("tiktok", "report"): {
+        "web": ["{open}.", "Click the ... (or Share) button on their profile.", "Click Report, choose 'Report account' and the reason, then Submit."],
+        "ios": ["{open}.", "Tap the ... or share arrow at the top.", "Tap Report, choose 'Report account' and the reason, then Submit."],
+        "android": ["{open}.", "Tap the ... or share arrow at the top.", "Tap Report, choose 'Report account' and the reason, then Submit."],
+    },
+    ("facebook", "report"): {
+        "web": ["{open}.", "Click ... under their cover photo.", "Choose 'Find support or report', pick the reason (fake profile, pretending to be someone, scam) and submit."],
+        "ios": ["{open}.", "Tap ... on their profile.", "Tap 'Report profile', choose the reason, and submit."],
+        "android": ["{open}.", "Tap ... on their profile.", "Tap 'Report profile', choose the reason, and submit."],
+    },
+    ("linkedin", "report"): {
+        "web": ["{open}.", "Click More under their headline.", "Choose 'Report / Block', then Report, pick the reason (fake account, scam) and submit."],
+        "ios": ["{open}.", "Tap ... on their profile.", "Tap 'Report or block', then Report, choose the reason and submit."],
+        "android": ["{open}.", "Tap ... on their profile.", "Tap 'Report or block', then Report, choose the reason and submit."],
     },
 }
 
