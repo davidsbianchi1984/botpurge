@@ -132,3 +132,12 @@ def test_fake_giveaway_script_is_banned_but_normal_talk_about_prizes_is_not():
     for i, line in enumerate(["did anyone win the giveaway last week?", "i spent $10 on this skin lol",
                               "congrats to the first 3 winners!"]):
         assert j.judge(msg(f"fan{i}", line, 50 + i)).action == "none", line
+
+
+def test_streamer_impersonators_are_banned():
+    j = Judge(Policy(mode="protect", protected_names=["KaiCenat", "ModMike"]))
+    for name in ["KaiCenat_official", "Kаi_Cenat", "kaicenat_backup", "M0dMike"]:
+        m = ChatMessage(platform="twitch", author_id=f"id-{name}", author_name=name, text="hey guys, DM me to claim your prize!", at=T0)
+        assert j.judge(m).action == "ban", name
+    ok = ChatMessage(platform="twitch", author_id="fan1", author_name="KaiFanatic", text="love the stream", at=T0)
+    assert j.judge(ok).action == "none"

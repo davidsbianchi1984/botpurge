@@ -169,3 +169,45 @@ def label_of(score: float) -> str:
     return label_for(score).value
 
 
+
+
+# ---------------------------------------------------------------------------------
+# Connected apps
+
+class AppsService:
+    def __init__(self, db: DB):
+        self.db = db
+
+    def store(self, user_id: str, apps: list) -> dict:
+        from .apps import score_app
+
+        prior = {(r["platform"], r["name"]): r["status"] for r in self.db.q("SELECT platform, name, status FROM apps WHERE user_id=?", (user_id,))}
+        counts: dict[str, int] = {}
+        with self.db.tx() as tx:
+            for a in apps:
+                v = score_app(a, apps)
+                status = prior.get((a.platform, a.name), "active")
+                label = "looks_real" if status == "trusted" else v.label
+                counts[label] = counts.get(label, 0) + 1
+                tx.execute("INSERT OR REPLACE INTO apps VALUES (?,?,?,?,?,?,?,?,?,?)",
+                           (user_id, a.platform, a.name, "|".join(a.permissions), a.approved_at.isoformat() if a.approved_at else None,
+                            a.status, v.score, label, dumps(v.reasons), status))
+        return {"apps": len(apps), "counts": counts}
+
+    def list(self, user_id: str) -> list[dict]:
+        from .apps import REVOKE_STEPS
+
+        out = []
+        for r in self.db.q("SELECT * FROM apps WHERE user_id=? ORDER BY score DESC", (user_id,)):
+            reasons = loads(r["reasons_json"], [])
+            out.append({"platform": r["platform"], "name": r["name"], "permissions": [p for p in (r["permissions"] or "").split("|") if p],
+                        "approved_at": r["approved_at"], "app_status": r["app_status"], "score": r["score"], "label": r["label"],
+                        "status": r["status"], "reasons": [x["text"] for x in reasons[:3]],
+                        "revoke_steps": REVOKE_STEPS.get(r["platform"], [])})
+        return out
+
+    def set_status(self, user_id: str, platform: str, name: str, status: str) -> None:
+        if status not in ("active", "revoked", "trusted"):
+            raise ValueError("status must be active, revoked or trusted")
+        if not self.db.x("UPDATE apps SET status=? WHERE user_id=? AND platform=? AND name=?", (status, user_id, platform, name)):
+            raise NotFound("app")

@@ -25,7 +25,8 @@ from .db import DB
 from .importers import EXPORT_HELP, ImportError_, import_export
 from .instructions_store import InstructionStore
 from .models import Platform
-from .inbox import InboxService
+from .apps import import_apps
+from .inbox import AppsService, InboxService
 from .liveguard import ChatMessage, LiveGuardService
 from .messages import import_messages, parse_paste
 from .personal import NotFound, PersonalService
@@ -43,6 +44,7 @@ class Services:
         self.personal = PersonalService(db)
         self.plans = Plans(db)
         self.inbox = InboxService(db)
+        self.apps = AppsService(db)
         self.liveguard = LiveGuardService(db, secrets_get=self.get_secret, http=x_http)
         self.instructions = InstructionStore(db)
         self.x_http = x_http
@@ -488,6 +490,32 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         if body.status == "removed":
             svc.plans.require(uid, "remove")
         svc.inbox.set_status(uid, body.platform, body.sender_id, body.status)
+        return {"ok": True}
+
+    # Connected apps
+    @app.post("/api/apps/import/{platform}")
+    async def apps_import(platform: str, file: UploadFile = File(...), uid: str = Depends(user)):
+        data = await file.read()
+        try:
+            found = import_apps(platform, file.filename or "upload", data)
+        except ImportError_ as exc:
+            raise HTTPException(400, str(exc))
+        return svc.apps.store(uid, found)
+
+    @app.get("/api/apps")
+    def apps_list(uid: str = Depends(user)):
+        return svc.apps.list(uid)
+
+    class AppStatusIn(BaseModel):
+        platform: str
+        name: str
+        status: str
+
+    @app.post("/api/apps/status")
+    def apps_status(body: AppStatusIn, uid: str = Depends(user)):
+        if body.status == "revoked":
+            svc.plans.require(uid, "remove")
+        svc.apps.set_status(uid, body.platform, body.name, body.status)
         return {"ok": True}
 
     class CanaryIn(BaseModel):

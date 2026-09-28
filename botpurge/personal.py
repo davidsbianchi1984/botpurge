@@ -195,16 +195,20 @@ class PersonalService:
             "fake_followers": one(f"SELECT COUNT(*) n FROM flags WHERE user_id=? AND {live} AND is_clone=0 AND direction IN ('friend','follower')"),
             "bots_you_follow": one(f"SELECT COUNT(*) n FROM flags WHERE user_id=? AND {live} AND is_clone=0 AND direction='following'"),
             "impersonators": one(f"SELECT COUNT(*) n FROM flags WHERE user_id=? AND {live} AND is_clone=1"),
-            "spam_messengers": one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=? AND status='active' AND platform!='email'"
+            "scam_texts": one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=? AND status='active' AND platform='sms'"
+                              " AND label IN ('likely_bot','suspicious')"),
+            "spam_messengers": one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=? AND status='active' AND platform NOT IN ('email','sms')"
                                    " AND label IN ('likely_bot','suspicious')"),
             "scam_emails": one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=? AND status='active' AND platform='email'"
                                " AND label IN ('likely_bot','suspicious')"),
         }
+        cats["risky_apps"] = one("SELECT COUNT(*) n FROM apps WHERE user_id=? AND status='active' AND label IN ('likely_bot','suspicious')")
         rings = one(f"SELECT COUNT(DISTINCT ring_id) n FROM flags WHERE user_id=? AND ring_id IS NOT NULL AND {live}")
         high = one(f"SELECT COUNT(*) n FROM flags WHERE user_id=? AND {live} AND label='likely_bot'")
         scanned = one("SELECT COUNT(*) n FROM flags WHERE user_id=?") + one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=?")
         removed = one("SELECT COUNT(*) n FROM flags WHERE user_id=? AND status='removed'") \
-            + one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=? AND status='removed'")
+            + one("SELECT COUNT(*) n FROM msg_senders WHERE user_id=? AND status='removed'") \
+            + one("SELECT COUNT(*) n FROM apps WHERE user_id=? AND status='revoked'")
         last = self.db.one("SELECT MAX(finished_at) t FROM scans WHERE user_id=?", (user_id,))["t"]
         total = sum(cats.values())
         return {"threats": total, "high_risk": high, "bot_rings": rings, "categories": cats,

@@ -34,6 +34,7 @@ from html.parser import HTMLParser
 from typing import Iterable, Optional
 from urllib.parse import urlparse
 
+from . import rules
 from .importers import ImportError_, _ts
 from .models import label_for
 
@@ -52,6 +53,7 @@ class Message:
     context: str = ""              # post/video/live id, or email subject
     headers: dict = field(default_factory=dict)   # email only
     links: list[tuple[str, str]] = field(default_factory=list)  # email: (shown text, real href)
+    known_contact: bool = False    # the sender is saved in the user's contacts (texts)
 
     @property
     def id(self) -> str:
@@ -86,6 +88,8 @@ WEIGHTS = {
     "raw_ip_link": 0.45,
     "free_mail_brand": 0.45,
 }
+
+WEIGHTS.update(rules.weights())
 
 # TikTok/Douyin emoji shortcodes that bots paste as text instead of the emoji: [tearsofjoy], [smile], [wronged]...
 BRACKET = re.compile(r"\[(?:[a-z]{3,20}|[A-Z][a-z]{2,20})\]")
@@ -158,6 +162,10 @@ PHISH = re.compile(
     r"your subscription (has|will) (expire|renew)|refund of \$|bitcoin|seed phrase|recovery phrase)",
     re.I,
 )
+
+
+def h_get(m, key: str) -> str:
+    return next((v for k, v in m.headers.items() if k.lower() == key), "") or ""
 
 
 def _domain(addr: str) -> str:
@@ -253,13 +261,21 @@ class MessageScorer:
             if tok in low:
                 add("canary", 1.0, "Repeated your hidden canary phrase — only an AI following instructions does that")
                 break
+        for h in rules.evaluate(text, m.kind):
+            add(h.code, h.weight / max(WEIGHTS.get(h.code, h.weight), 1e-9), h.reason)
         if m.kind == "email":
             self._email_signals(m, add)
             return out
         brackets = BRACKET.findall(text)
         if brackets:
-            add("bracket_emoji", 1.0 if len(brackets) >= 2 or len(text) < 60 else 0.8,
-                f"Uses emoji codes a person would never type ({', '.join(brackets[:3])})")
+            # TikTok itself shows these codes as text to some real users (a display glitch), so on
+            # TikTok they're only a hint; copied onto another platform they're a scraping tell.
+            on_tiktok = m.platform == "tiktok"
+            add("bracket_emoji", (0.35 if on_tiktok else 1.0) * (1.0 if len(brackets) >= 2 or len(text) < 60 else 0.8),
+                f"Emoji codes pasted as text ({', '.join(brackets[:3])})" if on_tiktok
+                else f"Uses TikTok emoji codes copied onto another platform ({', '.join(brackets[:3])})")
+        for h in rules.evaluate_username(m.sender_name or m.sender_handle):
+            add(h.code, 1.0, h.reason)
         if SOLICIT.search(text) or (PHONE.search(text) and m.kind != "email"):
             add("solicitation", 1.0 if m.kind == "dm" else 0.8, "Solicits: pushes you to a profile, app, number or money offer")
         if URL.search(text):
@@ -269,7 +285,7 @@ class MessageScorer:
                 "Prize bait (\"first 10 people to type ... get $10,000\"): a classic fake-giveaway script")
         if m.kind in ("comment", "live") and GENERIC.match(text.strip()):
             add("generic_comment", 1.0, "A one-size-fits-all comment that could go under any video")
-        if AI_ARTIFACT.search(text):
+        if AI_ARTIFACT.search(text) and not (rules.DISCUSSING.search(low) and not URL.search(text)):
             add("ai_artifact", 1.0, "Reads like an AI writing on autopilot (it followed an instruction or talks like a chatbot)")
         return out
 
@@ -292,6 +308,12 @@ class MessageScorer:
                     else:
                         add("brand_spoof", 1.0, f"Claims to be {brand.title()} but comes from {dom}")
                 break
+        for h in rules.attachment_findings([f for f in h_get(m, "x-attachments").split("|") if f]):
+            add(h.code, 1.0, h.reason)
+        if h_get(m, "x-html-smuggling"):
+            add("html_smuggling", 1.0, "Hidden code that builds a download inside the email (HTML smuggling)")
+        for code, strength, reason in rules.link_findings([href for _, href in m.links]):
+            add(code, 1.0, reason)
         look = _lookalike(dom)
         if look:
             add("lookalike_domain", 1.0, f"Sender domain {dom} imitates {look}")
@@ -320,6 +342,18 @@ class MessageScorer:
                 if len(t) >= 12:
                     tmpl_senders[t].add((m.platform, m.sender_id))
 
+        # Stolen top comments: a later comment copying an earlier one (25+ chars) by someone else on the same post.
+        stolen: set[str] = set()
+        first_by_post: dict[tuple, tuple] = {}
+        for m in sorted((m for m in messages if m.kind == "comment" and m.context), key=lambda m: m.at or datetime.min.replace(tzinfo=timezone.utc)):
+            t = _norm(m.text)
+            if len(t) < 25:
+                continue
+            k = (m.platform, m.context, t)
+            if k in first_by_post and first_by_post[k] != m.sender_id:
+                stolen.add(m.id)
+            first_by_post.setdefault(k, m.sender_id)
+
         results: list[SenderResult] = []
         for (platform, sid), items in by_sender.items():
             best: dict[str, tuple[float, str]] = {}
@@ -335,6 +369,8 @@ class MessageScorer:
                     if c not in best or s > best[c][0]:
                         best[c] = (s, t)
 
+            if any(m.id in stolen for m in items):
+                best["stolen_comment"] = (1.0, "Copied someone else's comment word for word to farm likes")
             social = [m for m in items if m.kind != "email"]
             # The same message over and over from this sender.
             counts = Counter(_norm(m.text) for m in social if len(_norm(m.text)) >= 4)
@@ -358,13 +394,23 @@ class MessageScorer:
                 # A sales pitch or link posted word for word by several accounts is a coordinated network.
                 best["template_across_senders"] = (1.0 if pitch else min(1.0, 0.6 + shared / 30),
                                                    f"Sent the same scripted message as {shared - 1} other accounts")
+            # Conversation arc across messages: wrong number -> other app -> money pitch.
+            ordered = sorted(items, key=lambda m: m.at or datetime.min.replace(tzinfo=timezone.utc))
+            arc = rules.sequence_hit([{r["code"] for r in item_scores[m.id][1]} for m in ordered])
+            if arc:
+                best[arc.code] = (1.0, arc.reason)
             key = f"{platform}:{sid}"
             if key in self.known_bots:
                 best["known_bot"] = (1.0, "Already flagged as a bot in your followers or friends")
             if key in self.faceless:
                 best["faceless_avatar"] = (1.0, "Profile photo shows no face (back of head, object or blank)")
 
-            reasons = [{"code": c, "text": t, "weight": self._w(c) * s} for c, (s, t) in best.items()]
+            # Saved contacts get the benefit of the doubt, except on near-certain scam scripts
+            # (a friend's hacked account sending "is this you in this video?" still gets caught).
+            trust = 0.5 if any(m.known_contact for m in items) else 1.0
+            reasons = [{"code": c, "text": t,
+                        "weight": self._w(c) * s * (1.0 if self._w(c) >= rules.STRENGTH["near_certain"] else trust)}
+                       for c, (s, t) in best.items()]
             reasons.sort(key=lambda r: -r["weight"])
             p = 1.0
             for r in reasons:
@@ -472,9 +518,12 @@ def _email_to_message(msg) -> Optional[Message]:
     name, addr = parseaddr(from_hdr)
     if not addr:
         return None
-    text_parts, links = [], []
+    text_parts, links, attachments, html_raw = [], [], [], []
     for part in (msg.walk() if msg.is_multipart() else [msg]):
         ctype = part.get_content_type()
+        fname = part.get_filename()
+        if fname:
+            attachments.append(fname)
         if ctype not in ("text/plain", "text/html"):
             continue
         try:
@@ -482,6 +531,7 @@ def _email_to_message(msg) -> Optional[Message]:
         except (LookupError, KeyError, AssertionError):
             payload = (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
         if ctype == "text/html":
+            html_raw.append(payload[:200000])
             p = _Links()
             p.feed(payload)
             links.extend(p.links)
@@ -495,6 +545,8 @@ def _email_to_message(msg) -> Optional[Message]:
     except (TypeError, ValueError):
         at = None
     headers = {k: str(msg.get(k, "")) for k in ("From", "Reply-To", "Authentication-Results", "Return-Path", "List-Unsubscribe")}
+    headers["x-attachments"] = "|".join(attachments[:50])
+    headers["x-html-smuggling"] = "1" if any(h for h in rules.attachment_findings([], "".join(html_raw)) if h.code == "html_smuggling") else ""
     return Message(kind="email", platform="email", sender_id=addr.lower(), sender_name=name, sender_handle=addr.lower(),
                    text=" ".join(text_parts)[:20000], at=at, context=str(msg.get("Subject", ""))[:300],
                    headers=headers, links=links[:200])
@@ -556,8 +608,80 @@ def parse_paste(text: str, platform: str, kind: str, context: str = "") -> list[
     return out
 
 
+def _phone(addr: str) -> str:
+    a = (addr or "").strip()
+    if "@" in a:
+        return a.lower()  # iMessage from an email address
+    digits = re.sub(r"[^\d+]", "", a)
+    return digits or a.lower()
+
+
+def parse_android_sms_xml(data: bytes) -> list[Message]:
+    """"SMS Backup & Restore" (Android) XML: <sms type="1" .../> is received; <mms msg_box="1"> too."""
+    import xml.etree.ElementTree as ET
+
+    out = []
+    for _, el in ET.iterparse(io.BytesIO(data), events=("end",)):
+        if el.tag == "sms" and el.get("type") == "1":
+            body, addr = el.get("body") or "", el.get("address") or ""
+        elif el.tag == "mms" and el.get("msg_box") == "1":
+            body = " ".join(p.get("text") or "" for p in el.iter("part") if (p.get("ct") or "") == "text/plain")
+            addr = el.get("address") or ""
+        else:
+            continue
+        name = el.get("contact_name") or ""
+        known = bool(name) and name not in ("(Unknown)", "null")
+        ms = el.get("date")
+        out.append(Message(kind="sms", platform="sms", sender_id=_phone(addr), sender_handle=addr, sender_name=name if known else "",
+                           text=body, at=_ts(int(ms) / 1000) if ms and ms.isdigit() else None, known_contact=known))
+        el.clear()
+    return out
+
+
+APPLE_EPOCH = 978307200  # 2001-01-01
+
+
+def _attributed_text(blob: bytes) -> str:
+    """Recent iOS stores message text in an NSAttributedString archive (attributedBody)."""
+    if not blob:
+        return ""
+    i = blob.find(b"NSString")
+    if i < 0:
+        return ""
+    j = blob.find(b"+", i)
+    if j < 0 or j + 2 > len(blob):
+        return ""
+    n, k = blob[j + 1], j + 2
+    if n == 0x81:  # two-byte length
+        n, k = int.from_bytes(blob[j + 2:j + 4], "little"), j + 4
+    return blob[k:k + n].decode("utf-8", "replace")
+
+
+def parse_iphone_sms_db(data: bytes) -> list[Message]:
+    """iPhone Messages database (sms.db from a Finder/iTunes backup)."""
+    import sqlite3
+
+    out = []
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        f.write(data)
+        f.flush()
+        con = sqlite3.connect(f"file:{f.name}?mode=ro", uri=True)
+        cols = {r[1] for r in con.execute("PRAGMA table_info(message)")}
+        body = "m.attributedBody" if "attributedBody" in cols else "NULL"
+        for text, blob, date, handle in con.execute(
+                f"SELECT m.text, {body}, m.date, h.id FROM message m LEFT JOIN handle h ON m.handle_id = h.ROWID WHERE m.is_from_me = 0"):
+            text = text or _attributed_text(blob)
+            if not text or not handle:
+                continue
+            secs = (date / 1e9 if date and date > 1e11 else (date or 0)) + APPLE_EPOCH
+            out.append(Message(kind="sms", platform="sms", sender_id=_phone(handle), sender_handle=handle, text=text,
+                               at=datetime.fromtimestamp(secs, timezone.utc) if date else None))
+        con.close()
+    return out
+
+
 def import_messages(source: str, filename: str, data: bytes) -> list[Message]:
-    """source: tiktok | instagram | facebook | x | email | csv"""
+    """source: tiktok | instagram | facebook | x | email | sms | csv"""
     files: list[tuple[str, bytes]] = []
     if data[:2] == b"PK":
         try:
@@ -567,7 +691,7 @@ def import_messages(source: str, filename: str, data: bytes) -> list[Message]:
         for info in zf.infolist():
             if not info.is_dir() and info.file_size < 200 * 1024 * 1024:
                 n = info.filename.lower()
-                if re.search(r"(message_\d+\.json|user_data(_tiktok)?\.json|direct-messages?(-group)?\.js|\.mbox|\.eml)$", n):
+                if re.search(r"(message_\d+\.json|user_data(_tiktok)?\.json|direct-messages?(-group)?\.js|\.mbox|\.eml|sms[^/]*\.xml|sms\.db)$", n):
                     files.append((info.filename, zf.read(info)))
     else:
         files.append((filename, data))
@@ -588,6 +712,12 @@ def import_messages(source: str, filename: str, data: bytes) -> list[Message]:
                     out += [m] if m else []
                 else:
                     out += parse_mbox(blob)
+        elif source == "sms":
+            for name, blob in files:
+                if blob[:16].startswith(b"SQLite format 3"):
+                    out += parse_iphone_sms_db(blob)
+                else:
+                    out += parse_android_sms_xml(blob)
         elif source == "csv":
             for _, blob in files:
                 out += parse_csv(blob.decode("utf-8-sig"))

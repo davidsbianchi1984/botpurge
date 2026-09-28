@@ -67,6 +67,7 @@ class Policy:
     timeout_s: int = 600
     max_actions_per_min: int = 30
     trust_subscribers: bool = True
+    protected_names: list = field(default_factory=list)   # the streamer's and moderators' names, to catch impersonators
 
 
 class Judge:
@@ -113,12 +114,15 @@ class Judge:
                 pitch = "solicitation" in sigs or "link_drop" in sigs or "fake_giveaway" in sigs
                 sigs["coordinated_script"] = (1.0 if pitch else 0.5,
                                               f"Same scripted line as {len(authors) - 1} other accounts just now")
+        imp = impersonates(m.author_name or m.author_id, self.policy.protected_names)
+        if imp:
+            sigs["impersonation"] = (1.0, f"Name imitates {imp}, but it's a different account")
         if key in self.confirmed:
             sigs["confirmed_bot"] = (1.0, "A likely bot from your followers showed up in chat")
         elif key in self.scorer.known_bots:
             sigs["known_bot"] = (1.0, "Already flagged as a bot in your followers")
 
-        weights = {**WEIGHTS, "confirmed_bot": 0.85, "coordinated_script": 0.8}
+        weights = {**WEIGHTS, "confirmed_bot": 0.85, "coordinated_script": 0.8, "impersonation": 0.85}
         reasons = sorted(((weights[c] * s, t, c) for c, (s, t) in sigs.items()), reverse=True)
         p = 1.0
         for w, _, _ in reasons:
@@ -128,7 +132,7 @@ class Judge:
         texts = [t for _, t, _ in reasons[:3]]
 
         pol = self.policy
-        strong = bool(codes & {"canary", "confirmed_bot"}) or sigs.get("coordinated_script", (0,))[0] >= 1.0 \
+        strong = bool(codes & {"canary", "confirmed_bot", "impersonation"}) or sigs.get("coordinated_script", (0,))[0] >= 1.0 \
             or sigs.get("fake_giveaway", (0,))[0] >= 1.0
         if (strong and score >= pol.timeout_at) or (score >= pol.ban_at and self.strikes[key] >= 2):
             action = "ban"
@@ -145,6 +149,30 @@ class Judge:
                 return Decision("none", score, texts + ["Rate cap reached: logged, not acted on"])
             self.actions.append(time.monotonic())
         return Decision(action, score, texts, pol.timeout_s if action == "timeout" else 0)
+
+
+def _skeleton(name: str) -> str:
+    from .rules import normalize
+
+    t = normalize(name or "").leet
+    t = re.sub(r"(official|real|backup|team|support|admin|mod|tv|live|_?\d{1,4})$", "", re.sub(r"[\s_.\-]+", "", t))
+    return t
+
+
+def impersonates(name: str, protected: list) -> Optional[str]:
+    """The protected name this chatter imitates (lookalike letters, separators, "official"/"backup"...)."""
+    from difflib import SequenceMatcher
+
+    me = _skeleton(name)
+    if len(me) < 4:
+        return None
+    for p in protected:
+        if not p or p.lower() == (name or "").lower():
+            continue  # the real account (badge checks also protect it)
+        other = _skeleton(p)
+        if len(other) >= 4 and (me == other or (abs(len(me) - len(other)) <= 2 and SequenceMatcher(None, me, other).ratio() >= 0.85)):
+            return p
+    return None
 
 
 # ------------------------------------------------------------------------------------

@@ -160,6 +160,16 @@ CREATE TABLE IF NOT EXISTS msg_senders (
     PRIMARY KEY (user_id, platform, sender_id)
 );
 
+CREATE TABLE IF NOT EXISTS apps (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL,
+    name TEXT NOT NULL,
+    permissions TEXT, approved_at TEXT, app_status TEXT,
+    score REAL NOT NULL, label TEXT NOT NULL, reasons_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',          -- active | revoked | trusted
+    PRIMARY KEY (user_id, platform, name)
+);
+
 CREATE TABLE IF NOT EXISTS canaries (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token TEXT NOT NULL,

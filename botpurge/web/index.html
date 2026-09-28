@@ -55,7 +55,7 @@
     <nav class="tabs" id="tabs">
       <button data-tab="dash" class="on">Dashboard</button>
       <button data-tab="flags">Flagged accounts</button>
-      <button data-tab="inbox">Inbox &amp; email</button>
+      <button data-tab="inbox">Messages, email &amp; apps</button>
       <button data-tab="queue">Removal queue</button>
       <button data-tab="howto">Removal steps</button>
       <button data-tab="log">History &amp; undo</button>
@@ -179,11 +179,12 @@
         <div class="row">
           <select id="mSource"><option value="tiktok">TikTok DMs (data export)</option><option value="instagram">Instagram DMs (data export)</option>
             <option value="facebook">Facebook Messenger (data export)</option><option value="x">X DMs (archive)</option>
-            <option value="email">Email (.mbox or .eml)</option><option value="csv">Comments / chat (CSV)</option></select>
+            <option value="email">Email (.mbox or .eml)</option><option value="sms">Text messages (Android backup .xml or iPhone sms.db)</option><option value="csv">Comments / chat (CSV)</option></select>
           <input type="file" id="mFile" accept=".zip,.json,.js,.mbox,.eml,.csv">
           <button class="primary" id="mImport">Scan</button>
         </div>
-        <p class="small muted">Gmail: takeout.google.com → Mail → .mbox. Outlook/Apple Mail: drag messages out as .eml, or export a mailbox.</p>
+        <p class="small muted">Gmail: takeout.google.com → Mail → .mbox. Outlook/Apple Mail: drag messages out as .eml, or export a mailbox.
+          Android texts: the free "SMS Backup &amp; Restore" app → back up → upload the .xml. iPhone texts: back up to your computer (Finder/iTunes), then upload <code>sms.db</code> (the desktop app finds it for you).</p>
         <h3>Paste comments or live chat</h3>
         <p class="small muted">Data exports don't include comments on your posts or live chat. Copy them from the app and paste them here, one per line as <code>handle: message</code>.</p>
         <div class="row">
@@ -199,6 +200,13 @@
           <select id="sTab"><option value="flagged">Flagged</option><option value="whitelisted">Real people</option><option value="removed">Blocked / removed</option><option value="all">Everyone</option></select></div>
         <div class="table-wrap"><table class="stack"><thead><tr><th>Sender</th><th>Score</th><th>Why</th><th class="hide-sm">Messages</th><th></th></tr></thead><tbody id="sRows"></tbody></table></div>
         <div id="sDetail"></div>
+      </div>
+      <div class="panel">
+        <h2>Connected apps</h2>
+        <p class="small muted">Follower-growth, auto-like and "who viewed my profile" apps are bots acting through <em>your</em> account. Upload the connected-apps file from your data export: X <code>connected-application.js</code>, or Facebook/Instagram "Apps and websites".</p>
+        <div class="row"><select id="aPlatform"><option value="x">X</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok (CSV)</option></select>
+          <input type="file" id="aFile" accept=".js,.json,.csv,.zip"><button class="primary" id="aGo">Check apps</button></div>
+        <div id="aList" style="margin-top:10px"></div>
       </div>
       <div class="panel">
         <h2>Canary traps: catch AI comment bots</h2>
@@ -312,7 +320,25 @@ async function loadInbox() {
     try { await api("/api/inbox/status", { method: "POST", headers: auth(), body: { platform: p, sender_id: id, status: "removed" } }); loadInbox(); } catch (e) { paywalled(e); } });
   document.querySelectorAll("[data-undo]").forEach(b => b.onclick = async () => { const [p, id] = split(b.dataset.undo);
     await api("/api/inbox/status", { method: "POST", headers: auth(), body: { platform: p, sender_id: id, status: "active" } }); loadInbox(); });
-  loadCanaries();
+  loadCanaries(); loadApps();
+}
+$("aGo").onclick = async () => {
+  const f = $("aFile").files[0]; if (!f) return toast("Choose the file first");
+  const fd = new FormData(); fd.append("file", f);
+  try { const r = await api(`/api/apps/import/${$("aPlatform").value}`, { method: "POST", form: fd, headers: auth() }); toast(`Checked ${r.apps} apps`); loadApps(); } catch (e) { paywalled(e); }
+};
+async function loadApps() {
+  const apps = await api("/api/apps", { headers: auth() });
+  $("aList").innerHTML = apps.map(a => `<div class="card" style="margin-bottom:8px"><div class="row"><span class="pill ${esc(a.label)}">${Math.round(a.score)}</span><b>${esc(a.name)}</b>
+      <span class="small muted">${esc(PLATFORM_NAMES[a.platform] || a.platform)}${a.permissions.length ? " · " + esc(a.permissions.join(", ")) : ""}</span><span style="flex:1"></span>
+      ${a.status === "active" ? `<button class="small" data-app="${esc(a.platform)}|${esc(a.name)}" data-st="trusted">I trust it</button><button class="small danger" data-app="${esc(a.platform)}|${esc(a.name)}" data-st="revoked">I removed it</button>` : `<span class="chip">${esc(a.status)}</span>`}</div>
+    ${a.reasons.length ? `<ul class="reasons">${a.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+    ${a.status === "active" && a.label !== "looks_real" ? `<details class="small"><summary>How to remove it</summary><ol class="steps">${a.revoke_steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol></details>` : ""}</div>`).join("")
+    || `<p class="muted small">No connected apps checked yet.</p>`;
+  document.querySelectorAll("[data-app]").forEach(b => b.onclick = async () => {
+    const i = b.dataset.app.indexOf("|");
+    try { await api("/api/apps/status", { method: "POST", headers: auth(), body: { platform: b.dataset.app.slice(0, i), name: b.dataset.app.slice(i + 1), status: b.dataset.st } }); loadApps(); } catch (e) { paywalled(e); }
+  });
 }
 async function loadCanaries() {
   const cs = await api("/api/canaries", { headers: auth() });
@@ -330,7 +356,7 @@ $("cNew").onclick = async () => {
 
 // ---------- scan result & plans ----------
 const CAT_NAMES = { fake_followers: "Fake friends & followers", bots_you_follow: "Bots you follow", impersonators: "Impersonators (clones)",
-  spam_messengers: "Spam & scam messengers", scam_emails: "Scam & spam email senders" };
+  spam_messengers: "Spam & scam messengers", scam_texts: "Scam texts", scam_emails: "Scam & spam email senders", risky_apps: "Risky connected apps" };
 let catalogCache = null;
 async function getCatalog() { return catalogCache ||= await api("/api/plans"); }
 function priceTag(p) {
