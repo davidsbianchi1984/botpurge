@@ -47,3 +47,43 @@ def test_serves_without_a_console(tmp_path, monkeypatch):
     finally:
         srv.should_exit = True
     assert (tmp_path / "botpurge.log").exists()
+
+
+def test_app_manifest_and_worker_are_served(client):
+    import json
+
+    m = client.get("/manifest.webmanifest")
+    assert m.headers["content-type"].startswith("application/manifest+json")
+    man = json.loads(m.text)
+    assert man["start_url"].startswith("/") and man["icons"]
+    sw = client.get("/sw.js")
+    assert sw.headers["content-type"].startswith("text/javascript") and "/api/" in sw.text   # API calls never cached
+    for i in man["icons"]:
+        assert client.get(i["src"]).status_code == 200
+
+
+def test_update_check(monkeypatch):
+    import httpx
+
+    from botpurge import __version__, release
+
+    release._cache.clear()
+    monkeypatch.delenv("BOTPURGE_DESKTOP", raising=False)
+    assert release.check_for_update()["update_available"] is False        # servers don't phone home
+    monkeypatch.setenv("BOTPURGE_UPDATE_CHECK", "1")
+    seen = []
+
+    def gh(req):
+        seen.append(req.url.path)
+        return httpx.Response(200, json={"tag_name": "v99.0.0", "html_url": "https://github.com/x/y/releases/tag/v99.0.0"})
+
+    http = httpx.Client(transport=httpx.MockTransport(gh))
+    info = release.check_for_update(http, now=1000.0)
+    assert info == {"version": __version__, "latest": "99.0.0", "update_available": True,
+                    "download_url": "https://github.com/x/y/releases/tag/v99.0.0"}
+    release.check_for_update(http, now=2000.0)
+    assert len(seen) == 1                                                  # cached for 12 hours
+    release._cache.clear()
+    down = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    assert release.check_for_update(down)["update_available"] is False     # offline or GitHub down: no news
+    release._cache.clear()

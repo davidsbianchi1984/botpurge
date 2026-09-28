@@ -30,8 +30,28 @@ CREATE TABLE IF NOT EXISTS users (
     consent_at TEXT,
     plan TEXT NOT NULL DEFAULT 'free',              -- free | cleanup | protect
     plan_activated_at TEXT,
-    plan_renews_at TEXT
+    plan_renews_at TEXT,
+    license_id TEXT,                                -- the store license that paid for the plan
+    license_key TEXT
 );
+
+-- The store's records (only on the server that sells licenses).
+CREATE TABLE IF NOT EXISTS licenses (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    plan TEXT NOT NULL,
+    session_id TEXT UNIQUE,
+    stripe_customer TEXT,
+    stripe_subscription TEXT,
+    payment_intent TEXT,
+    expires_at TEXT,                                -- NULL: never (Cleanup)
+    status TEXT NOT NULL,                           -- active | cancelled | refunded
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS licenses_email ON licenses(email);
+CREATE INDEX IF NOT EXISTS licenses_sub ON licenses(stripe_subscription);
+CREATE TABLE IF NOT EXISTS billing_events (id TEXT PRIMARY KEY, type TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS stripe_prices (plan TEXT PRIMARY KEY, price_id TEXT NOT NULL);   -- each plan's Stripe Price
 
 CREATE TABLE IF NOT EXISTS purchases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,6 +240,15 @@ CREATE TABLE IF NOT EXISTS secrets (
     PRIMARY KEY (user_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS mail_links (           -- live inbox connections (Gmail, Outlook), read-only
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    connected_at TEXT NOT NULL,
+    last_sync TEXT,
+    last_error TEXT,
+    PRIMARY KEY (user_id, provider)
+);
+
 CREATE TABLE IF NOT EXISTS oauth_pending (
     state TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -386,7 +415,8 @@ class DB:
         if "reason" not in icols:
             self.conn.execute("ALTER TABLE removal_items ADD COLUMN reason TEXT")
         ucols = {r["name"] for r in self.conn.execute("PRAGMA table_info(users)")}
-        for col, ddl in (("plan", "TEXT NOT NULL DEFAULT 'free'"), ("plan_activated_at", "TEXT"), ("plan_renews_at", "TEXT")):
+        for col, ddl in (("plan", "TEXT NOT NULL DEFAULT 'free'"), ("plan_activated_at", "TEXT"), ("plan_renews_at", "TEXT"),
+                         ("license_id", "TEXT"), ("license_key", "TEXT")):
             if col not in ucols:
                 self.conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
 

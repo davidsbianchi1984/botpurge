@@ -19,7 +19,24 @@ It never asks for a social media password. X connects through its official sign-
 | Impersonation watch and weekly protection report | | | ✓ |
 | Priority support | | | ✓ |
 
-**Beta:** every plan is free while `BOTPURGE_BETA=1` (the default). The prices are shown, marked "FREE during beta", and activating a plan is recorded so you can measure demand. With `BOTPURGE_BETA=0`, paid features return HTTP 402 naming the plan to buy. Payment processing (for example Stripe checkout) plugs into `Plans.activate(..., payment_ref=...)`.
+**Beta:** every plan is free while `BOTPURGE_BETA=1` (the default). The prices are shown, marked "FREE during beta", and activating a plan is recorded so you can measure demand. With `BOTPURGE_BETA=0`, paid features return HTTP 402 naming the plan to buy.
+
+### Payments and license keys
+
+- **The store:** the desktop app keeps everything on the buyer's computer, where Stripe can't send payment confirmations. So a hosted copy of Bot Purge acts as the store: Stripe Checkout takes the payment, and a signed webhook issues a **license key**.
+- **License keys:** each key is signed with the store's private key and checked offline by the app, so it can't be forged or edited.
+  - **Cleanup:** the key never expires.
+  - **Protect:** the key runs to the end of the paid month plus 3 days' grace. The app refreshes it daily; renewals extend it and cancellations let it run out.
+- **Buying:**
+  - In the desktop app, Buy opens the store checkout in the browser, and the buyer pastes the key under Plans > Enter license key.
+  - Web accounts on the store are upgraded straight away.
+  - "Email me my key" sends lost keys only to the address that paid.
+  - "Manage subscription" opens Stripe's billing portal (card, invoices, cancel).
+- **Store settings:**
+  - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (webhook URL: `/api/billing/webhook`; events `checkout.session.completed`, `invoice.paid`, `customer.subscription.deleted`, `charge.refunded`)
+  - `BOTPURGE_LICENSE_PRIVATE`, from `python -m botpurge.billing keygen`
+  - `BOTPURGE_PUBLIC_URL`
+  - optionally `BOTPURGE_SMTP_URL` and `BOTPURGE_MAIL_FROM`, to email keys
 
 ## What it catches
 
@@ -48,6 +65,7 @@ Detection judges **behaviour, never opinions**. A flood of copy-pasted lines get
   - scam pressure, links that go somewhere other than they say
   - abused free hosting, dangerous attachments, HTML smuggling
   - callback-phishing invoices, sextortion bitcoin demands, gift-card requests
+- **Live inboxes:** connect Gmail or Outlook, read-only. Protect checks the last 30 days of mail every day with all the email rules.
 - **Connected apps:** follower-growth, auto-like, "who viewed my profile", crypto-giveaway and DM-access apps holding access to your accounts, with the steps to revoke each.
 - **Evasion:** before any rule runs, text is normalised. Lookalike letters, zero-width characters, split links ("site . com") and stacked accents are undone, and hiding tricks count as evidence in themselves.
 
@@ -114,7 +132,11 @@ Open `/console`. Everything a trust-and-safety team needs:
 - **Notices and appeals:** every affected user gets a notice with a signed appeal link; reviewers work a queue, and approved appeals restore the account automatically.
 - **Permanent removal:** only after the appeal window closes, and only with a reviewer's sign-off.
 - **Records and reports:** a hash-chained append-only audit log, a real-time signup gate, reports, and an enforcement feed or webhook.
-- **Integrations:** a client SDK (`/static/sdk.js`: honeypots, automation markers, timing), and Discord and Discourse adapters that import members and apply tiers on the platform.
+- **Integrations:** a client SDK (`/static/sdk.js`: honeypots, automation markers, timing), and adapters that import members and apply tiers on the platform:
+  - **Discord:** verification role, timeout, ban.
+  - **Discourse:** deactivate, silence, suspend, delete.
+  - **Shopify:** tags that a Shopify Flow or the theme acts on, then delete. Paying customers are exempt.
+  - **WordPress / WooCommerce:** remove the role, then delete with content reassigned. Staff are exempt.
 
 ## Get the app
 
@@ -123,6 +145,13 @@ The **desktop app** is the product people download. It keeps everything on their
 - Builds for Windows, macOS and Linux come from `.github/workflows/release.yml`: push a tag like `v0.2.0` and the files are attached to a GitHub release. The download buttons point to the latest release, so the repository (or a release mirror) must be public for customers to download.
 - Before selling, sign the builds: an Apple Developer ID plus notarisation for macOS, and a code-signing certificate for Windows. Otherwise Gatekeeper and SmartScreen will warn people.
 - The Assisted-mode **browser extension** lives in `extension/`; load it unpacked in Chrome or Edge, or publish it to their stores.
+- **Phones:** open the hosted web app and tap **Install app** (on iPhone: Share > Add to Home Screen). It installs like an app, opens offline, and uses the same account.
+- **Updates:** the desktop app checks GitHub for a newer release twice a day and offers the download.
+- **Release builds:** the release workflow bakes in the repository variables `STORE_URL` and `LICENSE_PUBLIC_KEY`. It signs the builds when these secrets exist:
+  - **macOS:** `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`
+  - **Windows:** `WINDOWS_CERT_PFX`, `WINDOWS_CERT_PASSWORD`
+
+  A tag must match the app version (`v1.0.0` for 1.0.0).
 
 ## Run it from source
 
@@ -143,6 +172,9 @@ pyinstaller packaging/botpurge.spec   # build the desktop app locally
 | `BOTPURGE_DB`, `BOTPURGE_KEYFILE` / `BOTPURGE_SECRET` | Database path; the key that encrypts stored tokens and signs appeal links |
 | `BOTPURGE_ADMIN_TOKEN` | Moderation of community instructions, creating purge-console tenants, `/api/admin/metrics` |
 | `X_CLIENT_ID`, `X_REDIRECT_URI` | X OAuth app for one-click removal |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID` / `MS_CLIENT_SECRET` | Gmail and Outlook read-only connections |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `BOTPURGE_LICENSE_PRIVATE`, `BOTPURGE_PUBLIC_URL` | The store (see Payments) |
+| `BOTPURGE_STORE_URL`, `BOTPURGE_LICENSE_PUBLIC` | Where a desktop copy buys and checks keys (release builds bake these in) |
 | `BOTPURGE_AGENT_BROWSER` | Force the agent's browser (`chrome`, `msedge`) |
 
 ## How accuracy is checked
@@ -158,5 +190,15 @@ These gates run on synthetic and collected examples. Before launch, measure on r
 
 - **Thin exports:** Instagram, Facebook, TikTok and LinkedIn exports hold only names or handles and dates, so most bots there reach *Suspicious* (shown for review) rather than being pre-selected.
 - **Terms of service:** automated clicking (the done-for-you agent, and Live Guard on TikTok/Instagram) is against those platforms' terms. It is opt-in with explicit consent, human-paced and self-stopping, but it cannot be made risk-free. Get a legal review before selling it.
-- **Email monitoring** reads mailbox exports. Live inbox connections (Gmail API, Microsoft Graph) need those providers' app verification.
-- **Not built yet:** native mobile apps, Shopify and WordPress adapters, and payment processing.
+- **Gmail** read access is a Google "restricted scope": until the Google Cloud app passes Google's verification, only test users you add can connect. Outlook needs an app registered in Microsoft Entra.
+- **Phones** get the installable web app, not App Store builds. Phone apps can't read other apps' followers or messages anyway, so scans still come from data exports.
+
+## Launch checklist
+
+1. **Stripe:** activate the account (business details and payout bank account, on dashboard.stripe.com). Switch to live keys on the store server.
+2. **Store:** host a copy of Bot Purge with the store settings above. Register its `/api/billing/webhook` URL in Stripe to get the webhook secret.
+3. **Keys:** run `python -m botpurge.billing keygen`. The private key goes on the store only. Set the public key as the repository variable `LICENSE_PUBLIC_KEY`, and the store address as `STORE_URL`.
+4. **Code signing:** get an Apple Developer ID and a Windows code-signing certificate, and add them as the secrets listed above.
+5. **Downloads:** make the repository public, or mirror the releases, so the download links work for customers.
+6. **Legal:** have a lawyer review the terms, privacy policy and the done-for-you agent (platform terms of service).
+7. **Launch:** set `BOTPURGE_BETA=0` on the store when the beta ends, then push the `v1.0.0` tag.

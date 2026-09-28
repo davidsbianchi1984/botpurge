@@ -254,3 +254,22 @@ def test_choose_block_and_report_in_web_app(server):
         pg.wait_for_selector("#jobPanel ol.steps li")
         assert "Block" in pg.inner_text("#jobPanel")
         br.close()
+
+
+def test_installable_and_opens_offline(server):
+    with sync_api.sync_playwright() as p:
+        br = launch(p)
+        ctx = br.new_context()
+        pg = ctx.new_page()
+        pg.goto(server["url"] + "/")
+        man = pg.evaluate("fetch(document.querySelector('link[rel=manifest]').href).then(r => r.json())")
+        assert man["display"] == "standalone" and {i["sizes"] for i in man["icons"]} == {"192x192", "512x512"}
+        for i in man["icons"]:
+            assert pg.evaluate(f"fetch('{i['src']}').then(r => r.ok)")
+        pg.evaluate("navigator.serviceWorker.ready.then(() => true)")
+        pg.reload()                                  # now controlled by the service worker
+        pg.wait_for_function("navigator.serviceWorker.controller !== null")
+        ctx.set_offline(True)
+        pg.reload()
+        assert pg.title() == "Bot Purge" and pg.is_visible("header.top")
+        br.close()

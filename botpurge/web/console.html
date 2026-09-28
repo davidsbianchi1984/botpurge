@@ -52,12 +52,13 @@
         <p class="small muted">Send accounts through the REST API (<code>POST /api/purge/accounts</code>), or upload a CSV or JSON export of your user table with signup and activity signals. Lists in CSV cells are separated with <code>|</code>.</p>
         <div class="row"><input type="file" id="accFile" accept=".csv,.json"><button class="primary owner" id="accUpload">Upload</button></div>
         <h3>Or connect your platform's admin API</h3>
-        <p class="small muted">Imports members and applies each tier on your platform (Discourse: deactivate / silence / suspend / delete; Discord: verification role / timeout / ban). Credentials are encrypted at rest.</p>
+        <p class="small muted">Imports members and applies each tier on your platform (Discourse: deactivate / silence / suspend / delete; Discord: verification role / timeout / ban; Shopify: tags your Flow or theme acts on / delete; WordPress: remove role / delete). Credentials are encrypted at rest.</p>
         <div class="row owner">
-          <select id="adKind"><option value="discourse">Discourse</option><option value="discord">Discord</option></select>
-          <input id="adUrl" placeholder="https://forum.example.com  (Discourse)">
-          <input id="adGuild" placeholder="Server (guild) ID  (Discord)">
-          <input id="adSecret" type="password" placeholder="API key / bot token">
+          <select id="adKind"><option value="discourse">Discourse</option><option value="discord">Discord</option><option value="shopify">Shopify</option><option value="wordpress">WordPress / WooCommerce</option></select>
+          <input id="adUrl" placeholder="https://forum.example.com">
+          <input id="adUser" placeholder="Admin username" class="hidden">
+          <input id="adGuild" placeholder="Server (guild) ID" class="hidden">
+          <input id="adSecret" type="password" placeholder="API key">
           <button id="adSave">Connect</button><button id="adSync" class="primary">Import members</button>
         </div>
         <p class="small muted" id="adStatus"></p>
@@ -208,11 +209,23 @@ $("scanBtn").onclick = async () => { $("scanBtn").disabled = true; try { const r
 async function loadAdapter() {
   if (me.role !== "owner") return;
   const a = await api("/api/purge/adapter", { headers: H() });
-  $("adStatus").textContent = a ? `Connected: ${a.kind} ${a.settings.base_url || a.settings.guild_id || ""}` : "No adapter connected.";
+  $("adStatus").textContent = a ? `Connected: ${a.kind} ${a.settings.base_url || a.settings.shop || a.settings.guild_id || ""}` : "No adapter connected.";
 }
+const AD_HINTS = {
+  discourse: ["https://forum.example.com", "Admin API key"], discord: ["", "Bot token"],
+  shopify: ["your-store.myshopify.com", "Admin API access token (custom app: read/write customers)"],
+  wordpress: ["https://example.com", "Application Password (Users > Profile)"] };
+$("adKind").onchange = () => {
+  const k = $("adKind").value;
+  $("adUrl").classList.toggle("hidden", k === "discord"); $("adGuild").classList.toggle("hidden", k !== "discord");
+  $("adUser").classList.toggle("hidden", k !== "wordpress");
+  $("adUrl").placeholder = AD_HINTS[k][0]; $("adSecret").placeholder = AD_HINTS[k][1];
+};
 $("adSave").onclick = async () => {
   const kind = $("adKind").value, body = { kind, secret: $("adSecret").value };
-  if (kind === "discourse") body.base_url = $("adUrl").value; else body.guild_id = $("adGuild").value;
+  if (kind === "discord") body.guild_id = $("adGuild").value;
+  else if (kind === "shopify") body.shop = $("adUrl").value;
+  else { body.base_url = $("adUrl").value; if (kind === "wordpress") body.username = $("adUser").value; }
   try { await api("/api/purge/adapter", { method: "PUT", body, headers: H() }); $("adSecret").value = ""; toast("Connected"); loadAdapter(); } catch (e) { toast(e.message); }
 };
 $("adSync").onclick = async () => {

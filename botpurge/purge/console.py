@@ -104,7 +104,7 @@ class TenantConfig(BaseModel):
     allowed_tiers: list[int] = Field(default_factory=lambda: [1, 2, 3, 4])
     appeal_window_days: int = 30
     review_sla_days: int = 7
-    exempt_tags: list[str] = Field(default_factory=lambda: ["staff", "partner", "integration"])
+    exempt_tags: list[str] = Field(default_factory=lambda: ["staff", "partner", "integration", "paying"])
     exempt_ids: list[str] = Field(default_factory=list)
     batch_size: int = 500
     appeal_base_url: str = "/appeal"

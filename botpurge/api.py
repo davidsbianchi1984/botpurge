@@ -12,15 +12,16 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import security as sec
+from .connectors import mail as mailapi
 from .connectors import x as xapi
 from .db import DB
 from .importers import EXPORT_HELP, ImportError_, import_export
@@ -28,6 +29,9 @@ from .instructions_store import InstructionStore
 from .models import Platform
 from .agent.runner import AgentService
 from .apps import import_apps
+from . import __version__
+from .billing import Billing, BillingError
+from .release import check_for_update, store_url
 from .inbox import AppsService, InboxService
 from .liveguard import ChatMessage, LiveGuardService
 from .messages import import_messages, parse_paste
@@ -53,6 +57,46 @@ class Services:
         self.removal = RemovalService(db, self.personal, x_client_for=self.x_client_for)
         self.purge = PurgeService(db, enforcer=purge_enforcer, http=x_http)
         self.agent = AgentService(db, self.removal, self.personal)
+        self.billing = Billing(db, http=x_http)
+
+    def sync_mail(self, user_id: str, provider: str) -> dict:
+        """Pull the last 30 days of a connected inbox into the email scanner."""
+        from .messages import parse_email_bytes
+
+        p = mailapi.PROVIDERS[provider]
+        rt = self.get_secret(user_id, f"mail_{provider}_refresh")
+        if not rt:
+            raise ValueError(f"{p['name']} isn't connected")
+        try:
+            tok = mailapi.refresh(provider, rt, os.environ.get(p["client_env"], ""), os.environ.get(p["secret_env"]), http=self.x_http)
+            if tok.get("refresh_token"):
+                self.save_secret(user_id, f"mail_{provider}_refresh", tok["refresh_token"])
+            raws = mailapi.FETCHERS[provider](tok["access_token"], http=self.x_http)
+        except mailapi.MailError as exc:
+            self.db.x("UPDATE mail_links SET last_error=? WHERE user_id=? AND provider=?", (str(exc), user_id, provider))
+            raise
+        msgs = [m for m in (parse_email_bytes(r) for r in raws) if m]
+        result = self.inbox.store(user_id, msgs) if msgs else {"messages": 0}
+        self.db.x("UPDATE mail_links SET last_sync=?, last_error=NULL WHERE user_id=? AND provider=?", (sec.iso(), user_id, provider))
+        return {"provider": provider, "fetched": len(raws), **result}
+
+    def refresh_licenses(self) -> int:
+        """Once a day, fetch renewed Protect licenses from the store (desktop copies)."""
+        store = store_url()
+        if not store:
+            return 0
+        last = self.db.one("SELECT at FROM billing_events WHERE id='refresh-marker'")
+        if last and (sec.now() - sec.parse_iso(last["at"])).total_seconds() < 86400:
+            return 0
+        self.db.x("INSERT OR REPLACE INTO billing_events(id,type,at) VALUES ('refresh-marker','refresh',?)", (sec.iso(),))
+        client = self.x_http or httpx.Client(timeout=20)
+
+        def fetch(key: str) -> str:
+            r = client.post(store + "/api/billing/refresh", json={"license": key})
+            r.raise_for_status()
+            return r.json()["license"]
+
+        return self.plans.refresh_licenses(fetch)
 
     def x_client_for(self, user_id: str):
         tok = self.db.one("SELECT sealed FROM secrets WHERE user_id=? AND name='x_access_token'", (user_id,))
@@ -107,6 +151,15 @@ class Services:
         from .protect import send_weekly_reports
 
         done["reports"] = send_weekly_reports(self.db, self.plans.features)
+        done["licenses"] = self.refresh_licenses()
+        day_ago = sec.iso(sec.now() - timedelta(days=1))
+        for m in self.db.q("SELECT user_id, provider FROM mail_links WHERE last_sync IS NULL OR last_sync<?", (day_ago,)):
+            if "email" in self.plans.features(m["user_id"]):      # daily inbox checks are part of Protect
+                try:
+                    self.sync_mail(m["user_id"], m["provider"])
+                    done["mail"] = done.get("mail", 0) + 1
+                except Exception:
+                    pass
         for uid in self.personal.due_rescans():
             done["rescans"] += 1
             if self.db.one("SELECT 1 FROM secrets WHERE user_id=? AND name='x_access_token'", (uid,)):
@@ -136,7 +189,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
             threading.Thread(target=loop, daemon=True).start()
         yield
 
-    app = FastAPI(title="Bot Purge", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Bot Purge", version=__version__, lifespan=lifespan)
     app.state.svc = svc
 
     # ---- errors ---------------------------------------------------------------------
@@ -153,6 +206,14 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     @app.exception_handler(ValueError)
     async def _bad(_: Request, exc: Exception):
         return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.exception_handler(mailapi.MailError)
+    async def _mail(_: Request, exc: Exception):
+        return JSONResponse({"detail": str(exc)}, status_code=502)
+
+    @app.exception_handler(BillingError)
+    async def _billing(_: Request, exc: Exception):
+        return JSONResponse({"detail": str(exc)}, status_code=503)
 
     @app.exception_handler(PermissionError)
     async def _forbidden(_: Request, exc: Exception):
@@ -196,12 +257,25 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def appeal_page(token: str):
         return FileResponse(WEB / "appeal.html")
 
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    def manifest():
+        return FileResponse(WEB / "manifest.webmanifest", media_type="application/manifest+json")
+
+    @app.get("/sw.js", include_in_schema=False)
+    def service_worker():
+        # Served from the root so it can cover the whole app.
+        return FileResponse(WEB / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
     @app.get("/static/{name}", include_in_schema=False)
     def static(name: str):
         p = (WEB / name).resolve()
         if p.parent != WEB.resolve() or not p.exists():
             raise HTTPException(404)
         return FileResponse(p)
+
+    @app.get("/api/app/version")
+    def app_version():
+        return check_for_update(svc.x_http)
 
     @app.get("/api/health")
     def health():
@@ -221,7 +295,9 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     @app.get("/api/plans")
     def plans_catalog():
-        return catalog()
+        store = store_url()
+        own = Billing.store_configured()
+        return {**catalog(), "store_url": store or ("" if not own else None), "can_buy": bool(store or own)}
 
     @app.get("/api/me/plan")
     def my_plan(uid: str = Depends(user)):
@@ -233,6 +309,87 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     @app.post("/api/me/plan")
     def choose_plan(body: PlanIn, uid: str = Depends(user)):
         return svc.plans.activate(uid, body.plan)
+
+    # ---- payments and licenses (see billing.py) --------------------------------------
+
+    class LicenseIn(BaseModel):
+        license: str = Field(max_length=4000)
+
+    @app.post("/api/me/license")
+    def enter_license(body: LicenseIn, uid: str = Depends(user)):
+        return svc.plans.apply_license(uid, body.license)
+
+    class CheckoutIn(BaseModel):
+        plan: str
+        email: Optional[str] = Field(default=None, max_length=320)
+
+    @app.post("/api/billing/checkout")
+    def checkout(body: CheckoutIn, authorization: str = Header(default="")):
+        """This server is the store: a Stripe Checkout page (signed-in web users get the plan at once)."""
+        token = authorization.removeprefix("Bearer ").strip()
+        uid = svc.personal.auth(token) if token else None
+        email = body.email
+        if uid and not email:
+            email = svc.db.one("SELECT email FROM users WHERE id=?", (uid,))["email"]
+        return {"url": svc.billing.checkout(body.plan, email, uid)}
+
+    @app.get("/buy/{plan}", include_in_schema=False)
+    def buy(plan: str, email: Optional[str] = None):
+        """What the desktop app's Buy buttons open in the browser."""
+        return RedirectResponse(svc.billing.checkout(plan, email), status_code=303)
+
+    @app.post("/api/billing/webhook", include_in_schema=False)
+    async def stripe_webhook(request: Request, stripe_signature: str = Header(default="")):
+        try:
+            return svc.billing.handle_webhook(await request.body(), stripe_signature)
+        except BillingError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.get("/api/billing/license")
+    def license_for_session(session_id: str = Query(max_length=300)):
+        key = svc.billing.license_for_session(session_id)
+        if not key:
+            return JSONResponse({"detail": "Payment is still being confirmed"}, status_code=404)
+        return {"license": key}
+
+    @app.post("/api/billing/refresh")
+    def refresh_license(body: LicenseIn):
+        return {"license": svc.billing.refresh(body.license)}
+
+    @app.post("/api/billing/portal")
+    def billing_portal(body: LicenseIn):
+        return {"url": svc.billing.portal(body.license)}
+
+    def _store(path: str, payload: dict) -> Optional[dict]:
+        """Desktop copies forward store requests server-side (the page can't call another origin)."""
+        store = store_url()
+        if not store:
+            return None
+        r = (svc.x_http or httpx.Client(timeout=20)).post(store + path, json=payload)
+        if r.status_code >= 400:
+            raise BillingError((r.json() if r.headers.get("content-type", "").startswith("application/json") else {}).get("detail")
+                               or "The Bot Purge store couldn't be reached. Please try again")
+        return r.json()
+
+    @app.post("/api/me/billing/portal")
+    def my_billing_portal(uid: str = Depends(user)):
+        key = svc.db.one("SELECT license_key FROM users WHERE id=?", (uid,))["license_key"]
+        if not key:
+            raise ValueError("No subscription on this account")
+        return _store("/api/billing/portal", {"license": key}) or {"url": svc.billing.portal(key)}
+
+    class EmailIn(BaseModel):
+        email: str = Field(max_length=320)
+
+    @app.post("/api/billing/send-keys")
+    def send_keys(body: EmailIn):
+        if _store("/api/billing/send-keys", {"email": body.email}) is None:
+            svc.billing.send_keys(body.email)
+        return {"ok": True, "detail": "If that email bought Bot Purge, its license keys are on their way."}
+
+    @app.get("/billing/success", include_in_schema=False)
+    def billing_success():
+        return FileResponse(WEB / "success.html")
 
     @app.get("/api/me/summary")
     def summary(uid: str = Depends(user)):
@@ -294,6 +451,73 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         svc.save_secret(row["user_id"], "x_user_id", str(me["id"]))
         svc.sync_x(row["user_id"])
         return RedirectResponse("/?connected=x")
+
+    @app.get("/api/mail")
+    def mail_links(uid: str = Depends(user)):
+        rows = {r["provider"]: dict(r) for r in svc.db.q("SELECT * FROM mail_links WHERE user_id=?", (uid,))}
+        return [{"provider": k, "name": p["name"], "available": bool(os.environ.get(p["client_env"])),
+                 "connected": k in rows, "last_sync": rows.get(k, {}).get("last_sync"), "last_error": rows.get(k, {}).get("last_error")}
+                for k, p in mailapi.PROVIDERS.items()]
+
+    @app.post("/api/mail/{provider}/connect")
+    def mail_connect(provider: str, request: Request, uid: str = Depends(user)):
+        svc.plans.require(uid, "email")
+        p = mailapi.PROVIDERS.get(provider)
+        if not p:
+            raise HTTPException(404, "unknown mail provider")
+        client_id = os.environ.get(p["client_env"])
+        if not client_id:
+            raise HTTPException(503, f"{p['name']} isn't set up on this copy yet (set {p['client_env']})")
+        pkce = xapi.PKCE.new()
+        state = f"{provider}.{pkce.state}"
+        svc.db.x("INSERT INTO oauth_pending VALUES (?,?,?,?)", (state, uid, pkce.verifier, sec.iso()))
+        redirect = os.environ.get("MAIL_REDIRECT_URI", str(request.url_for("mail_callback")))
+        return {"authorize_url": mailapi.authorize_url(provider, client_id, redirect, state, pkce.challenge)}
+
+    @app.get("/api/mail/callback", name="mail_callback")
+    def mail_callback(request: Request, state: str, code: str = "", error: str = ""):
+        row = svc.db.one("SELECT * FROM oauth_pending WHERE state=?", (state,))
+        if not row:
+            raise HTTPException(400, "Unknown or expired sign-in attempt")
+        svc.db.x("DELETE FROM oauth_pending WHERE state=?", (state,))
+        provider = state.split(".", 1)[0]
+        if error or not code:
+            return _mail_done(provider, False)
+        p = mailapi.PROVIDERS[provider]
+        redirect = os.environ.get("MAIL_REDIRECT_URI", str(request.url_for("mail_callback")))
+        tok = mailapi.exchange_code(provider, code, redirect, row["verifier"], os.environ[p["client_env"]],
+                                    os.environ.get(p["secret_env"]), http=svc.x_http)
+        if not tok.get("refresh_token"):
+            return _mail_done(provider, False)
+        svc.save_secret(row["user_id"], f"mail_{provider}_refresh", tok["refresh_token"])
+        svc.db.x("INSERT OR REPLACE INTO mail_links(user_id,provider,connected_at) VALUES (?,?,?)", (row["user_id"], provider, sec.iso()))
+        try:
+            svc.sync_mail(row["user_id"], provider)
+        except Exception:
+            pass                                        # shown as last_error; the link itself is saved
+        return _mail_done(provider, True)
+
+    def _mail_done(provider: str, ok: bool) -> HTMLResponse:
+        # Sign-in happens in the system browser (Google blocks sign-in inside app windows), so just say where to go next.
+        name = mailapi.PROVIDERS[provider]["name"]
+        msg = (f"{name} is connected. You can close this tab and go back to Bot Purge." if ok
+               else f"{name} wasn't connected. Close this tab and try again from Bot Purge.")
+        return HTMLResponse(f'<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">'
+                            f'<link rel="stylesheet" href="/static/style.css"><main style="max-width:560px"><div class="panel">'
+                            f'<h2>{"Connected ✅" if ok else "Not connected"}</h2><p>{msg}</p></div></main>')
+
+    @app.post("/api/mail/{provider}/sync")
+    def mail_sync(provider: str, uid: str = Depends(user)):
+        svc.plans.require(uid, "email")
+        if provider not in mailapi.PROVIDERS:
+            raise HTTPException(404, "unknown mail provider")
+        return svc.sync_mail(uid, provider)
+
+    @app.delete("/api/mail/{provider}")
+    def mail_disconnect(provider: str, uid: str = Depends(user)):
+        svc.db.x("DELETE FROM mail_links WHERE user_id=? AND provider=?", (uid, provider))
+        svc.db.x("DELETE FROM secrets WHERE user_id=? AND name=?", (uid, f"mail_{provider}_refresh"))
+        return {"disconnected": provider}
 
     @app.post("/api/x/sync")
     def x_sync(uid: str = Depends(user)):
@@ -800,11 +1024,16 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     class AdapterIn(BaseModel):
         kind: str
-        secret: str = Field(description="Discourse API key or Discord bot token")
+        secret: str = Field(description="Discourse API key, Discord bot token, Shopify access token or WordPress Application Password")
         base_url: Optional[str] = None
         api_username: Optional[str] = None
         guild_id: Optional[str] = None
         verify_role_id: Optional[str] = None
+        shop: Optional[str] = None
+        api_version: Optional[str] = None
+        username: Optional[str] = None
+        member_role: Optional[str] = None
+        reassign_to: Optional[str] = None
 
     @app.get("/api/purge/adapter")
     def get_adapter(t=Depends(owner)):
