@@ -62,12 +62,24 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def _ensure_stdio(d: Path) -> None:
+    """Windowed apps (no console) have no stdout/stderr; logging to None crashes the server.
+    Send output to a log file in the app-data folder instead (handy for support, too)."""
+    if sys.stdout is None or sys.stderr is None:
+        log = open(d / "botpurge.log", "a", buffering=1, encoding="utf-8")
+        if sys.stdout is None:
+            sys.stdout = log
+        if sys.stderr is None:
+            sys.stderr = log
+
+
 def serve(port: int):
     import uvicorn
 
     from .api import create_app
 
-    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning"))
+    _ensure_stdio(data_dir())
+    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning", log_config=None))
     threading.Thread(target=server.run, daemon=True, name="botpurge-server").start()
     deadline = time.time() + 20
     while not server.started and time.time() < deadline:

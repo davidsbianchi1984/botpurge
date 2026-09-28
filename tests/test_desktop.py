@@ -28,3 +28,22 @@ def test_local_endpoints_are_desktop_only(client, user):
     from conftest import hdr
 
     assert client.get("/api/local/iphone-backups", headers=hdr(user)).status_code == 404
+
+
+def test_serves_without_a_console(tmp_path, monkeypatch):
+    """Windowed builds on Windows have no stdout/stderr; the server must still start."""
+    import sys
+    import urllib.request
+
+    monkeypatch.setattr(desktop, "data_dir", lambda: tmp_path)
+    monkeypatch.setenv("BOTPURGE_DB", str(tmp_path / "db.sqlite3"))
+    monkeypatch.setenv("BOTPURGE_WORKER", "0")
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    port = desktop.free_port()
+    srv = desktop.serve(port)
+    try:
+        assert urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5).read() == b'{"ok":true}'
+    finally:
+        srv.should_exit = True
+    assert (tmp_path / "botpurge.log").exists()
