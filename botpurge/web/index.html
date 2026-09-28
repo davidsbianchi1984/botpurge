@@ -18,22 +18,37 @@
 
 <main>
   <!-- Sign in -->
-  <section id="auth" class="panel hidden" style="max-width:520px;margin:40px auto">
-    <h2>Clean bots out of your friends, followers and following</h2>
-    <p class="muted">We never ask for your social media passwords. Connect X with its official sign-in, or upload the data export each platform lets you download.</p>
-    <div class="row" style="margin:12px 0">
-      <input id="email" type="email" placeholder="you@example.com" style="flex:1" autocomplete="email">
-      <button class="primary" id="signup">Create account</button>
+  <section id="auth" class="hidden">
+    <div class="hero">
+      <h2>Bots, fakes and scammers, gone.</h2>
+      <p class="muted">Bot Purge scans your followers, friends, DMs, texts, email, connected apps and live chats, shows you every threat it finds, and removes them. For people, creators and whole platforms.</p>
     </div>
-    <details class="small">
-      <summary>Scanning a teen's account as a parent or guardian?</summary>
-      <p class="muted">Only with the teen's knowledge and consent. Enter their handle and confirm below.</p>
-      <div class="row"><input id="guardianOf" placeholder="Teen's handle"><label><input type="checkbox" id="teenConsent"> The teen has agreed</label></div>
-    </details>
-    <details class="small" style="margin-top:8px">
-      <summary>Already have an access key?</summary>
-      <div class="row" style="margin-top:6px"><input id="tokenIn" placeholder="Paste your access key" style="flex:1"><button id="useToken">Sign in</button></div>
-    </details>
+    <div class="grid two">
+      <div class="panel">
+        <div class="chip good">For you and your family</div>
+        <h2 style="margin-top:8px">Clean up your accounts</h2>
+        <p class="small muted">Free scan. We never ask for your social media passwords: connect X with its official sign-in, or upload the data export each platform lets you download.</p>
+        <div class="row" style="margin:12px 0">
+          <input id="email" type="email" placeholder="you@example.com" style="flex:1" autocomplete="email">
+          <button class="primary" id="signup">Start free scan</button>
+        </div>
+        <details class="small">
+          <summary>Scanning a teen's account as a parent or guardian?</summary>
+          <p class="muted">Only with the teen's knowledge and consent. Enter their handle and confirm below.</p>
+          <div class="row"><input id="guardianOf" placeholder="Teen's handle"><label><input type="checkbox" id="teenConsent"> The teen has agreed</label></div>
+        </details>
+        <details class="small" style="margin-top:8px">
+          <summary>Already have an access key?</summary>
+          <div class="row" style="margin-top:6px"><input id="tokenIn" placeholder="Paste your access key" style="flex:1"><button id="useToken">Sign in</button></div>
+        </details>
+      </div>
+      <div class="panel">
+        <div class="chip warn">For companies and platform owners</div>
+        <h2 style="margin-top:8px">Purge bots from your whole platform</h2>
+        <p class="small muted">Score every account on your service, remove bot rings in reversible tiers, and give every affected user a notice and a fair appeal. Full audit log, dry runs, rollback, a real-time signup gate, and Discord and Discourse integrations.</p>
+        <a class="btn primary" href="/console" style="margin-top:12px">Open the Purge Console</a>
+      </div>
+    </div>
   </section>
 
   <section id="appView" class="hidden">
