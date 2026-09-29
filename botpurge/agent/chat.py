@@ -168,6 +168,14 @@ class Toolbox:
         return self._did(f"Scanning only {scope_words(p['scope'])}: checked {checked}, found {bots + sus} "
                          f"({bots} likely bots or fakes, {sus} suspicious). They're under Flagged accounts, ready to remove")
 
+    def set_canary(self, label: str = "") -> str:
+        """Create a canary trap: a line only an AI bot would repeat, and say where to put it."""
+        self.svc.plans.require(self.uid, "canary")
+        c = self.svc.inbox.new_canary(self.uid, (label or "").strip()[:100])
+        return self._did(f"Canary trap set{(' for ' + label.strip()) if label.strip() else ''}. Put this line in your video caption, "
+                         f"a pinned comment, or say it in the video: \u201c{c['instruction']}\u201d. Real people skip it. Any account "
+                         f"that repeats \u201c{c['phrase']}\u201d is a confirmed bot, and I flag it the moment you paste or scan your comments")
+
     def show_settings(self) -> str:
         p = self.prefs()
         live = p.get("live") or {}
@@ -244,6 +252,11 @@ def interpret(tb: Toolbox, text: str, context: Optional[dict] = None) -> list[st
         kinds = [k for k, rx in (("bots", r"\bbots?\b"), ("spam", r"\bspam\w*"), ("fraud", r"\b(fraud\w*|scam\w*)"),
                                  ("fakes", r"\bfakes?\b|\bfake accounts?\b")) if re.search(rx, low)]
         run(tb.scan_scope, plats, dirs, kinds)
+        return out
+
+    if re.search(r"\bcanary|\btrap\b", low) and re.search(r"\b(set|create|make|put|lay|start|build)\b", low):
+        m = re.search(r"\b(?:for|on)\s+(my\s+)?(.{3,60}?)(?:\s+to\b|[.!?]|$)", t, re.I)
+        run(tb.set_canary, (m.group(2) if m else "").strip())
         return out
 
     if re.search(r"\b(slow(er)?( down)?|go slower|gentle|take it easy|more human)\b", low):
@@ -345,6 +358,8 @@ TOOLS = [
          "platforms": {"type": "array", "items": {"type": "string", "enum": ["tiktok", "instagram", "facebook", "linkedin", "x"]}},
          "directions": {"type": "array", "items": {"type": "string", "enum": ["follower", "following", "friend"]}},
          "kinds": {"type": "array", "items": {"type": "string", "enum": ["bots", "spam", "fraud", "fakes"]}}}}},
+    {"name": "set_canary", "description": "Create a canary trap (a line only an AI bot would repeat) and tell the person where to put it.",
+     "input_schema": {"type": "object", "properties": {"label": {"type": "string", "description": "which post or video it's for"}}}},
     {"name": "show_settings", "description": "Read the agent's current settings.", "input_schema": {"type": "object", "properties": {}}},
 ]
 SYSTEM = ("You are the Bot Purge agent talking with the person you work for. You remove bots, fake accounts and scammers from their "

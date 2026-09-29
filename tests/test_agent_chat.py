@@ -135,3 +135,10 @@ def test_be_a_mod_for_my_live(client, user):
     r = say(client, user, "Be a mod for my live stream, removing bot spam and fraud accounts")
     assert r["prefs"]["live"]["mode"] == "protect" and "I'll be your live-stream mod" in r["reply"]
     assert "scope" not in r["prefs"] or not r["prefs"].get("scope")          # not mistaken for a follower scan
+
+
+def test_set_a_canary_trap_in_plain_words(client, user):
+    r = say(client, user, "Set a canary trap to catch bot, spam and fraud accounts on my videos")
+    assert "Canary trap set" in r["reply"] and "pinned comment" in r["reply"] and "confirmed bot" in r["reply"]
+    cs = client.get("/api/canaries", headers=hdr(user)).json()
+    assert len(cs) == 1 and cs[0]["phrase"] in r["reply"] and cs[0]["instruction"] in r["reply"]
