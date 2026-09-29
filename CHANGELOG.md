@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
 - **More bot tells:** random-letter names, names never set ("user45418458969"), and profile photos that show a person but hide the face. The dashboard now says "bots found".
 
