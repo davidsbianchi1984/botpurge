@@ -77,11 +77,12 @@ class Executor:
     """Executes one program on a Playwright page."""
 
     def __init__(self, pacing: Optional[Pacing] = None, planner: Optional[Callable[[str, dict], Optional[dict]]] = None,
-                 timeout_ms: int = 8000, cockpit=None):
+                 timeout_ms: int = 8000, cockpit=None, ask_help: bool = True):
         self.pacing = pacing or Pacing()
         self.planner = planner          # (visible_text, failed_step) -> replacement step or None
         self.timeout = timeout_ms
         self.cockpit = cockpit          # visible cursor, take-over and ask-for-help (see cockpit.py)
+        self.ask_help = ask_help        # False while moderating a live: the streamer is busy, keep going
 
     def _begin(self, page) -> None:
         """Wait while the person is in control, then mark what follows as the agent's own input."""
@@ -122,6 +123,21 @@ class Executor:
                 loc = scope.get_by_text(s["text"], exact=True)
             if not loc.count():
                 loc = scope.get_by_text(s["text"])
+        return self._on_screen(page, loc)
+
+    @staticmethod
+    def _on_screen(page, loc):
+        """Of several matches (a menu's "Block" and its confirm dialog's "Block"), the one the person can see."""
+        vw = page.viewport_size or {"width": 10 ** 6, "height": 10 ** 6}
+        try:
+            for i in range(min(loc.count(), 8)):
+                cand = loc.nth(i)
+                if cand.is_visible():
+                    b = cand.bounding_box()
+                    if b and b["x"] + b["width"] > 0 and b["y"] + b["height"] > 0 and b["x"] < vw["width"] and b["y"] < vw["height"]:
+                        return cand
+        except Exception:
+            pass
         return loc.first
 
     def _pushback(self, page) -> Optional[str]:
@@ -243,7 +259,7 @@ class Executor:
                             loc.wait_for(state="visible", timeout=self.timeout)
                         except Exception:
                             alt = self.planner(cur.locator("body").inner_text()[:6000], s) if self.planner else None
-                            if not alt and self.cockpit and op in ("click", "select", "hover"):
+                            if not alt and self.cockpit and self.ask_help and not s.get("optional") and op in ("click", "select", "hover"):
                                 self._end(cur)
                                 picked = self.cockpit.ask_help(cur, s)
                                 if picked:
@@ -259,11 +275,11 @@ class Executor:
                         if self.cockpit:
                             self.cockpit.point_at(cur, loc)
                         if op in ("click", "select"):
-                            loc.click()
+                            loc.click(timeout=self.timeout)
                         elif op == "hover":
-                            loc.hover()
+                            loc.hover(timeout=self.timeout)
                         elif op == "fill":
-                            loc.click()
+                            loc.click(timeout=self.timeout)
                             loc.fill("")
                             self._typing(loc, s["value"])
                         else:

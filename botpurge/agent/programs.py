@@ -130,6 +130,7 @@ BLOCK: dict[str, list[dict]] = {
 LIVE_ACTIONS: dict[tuple[str, str], list[dict]] = {
     ("tiktok", "ban"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "text": "Block"}, {"op": "click", "text": "Block"}],
     ("tiktok", "timeout"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "text": "Mute"}, {"op": "click", "text": "{mute_label}"}],
+    ("tiktok", "delete"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "any": ["Delete comment", "Delete"]}],
     ("instagram", "ban"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "any": ["Remove", "Block"]},
                            {"op": "click", "any": ["Remove", "Block"], "optional": True}],
     ("facebook", "ban"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "any": ["Remove from live video", "Block", "Remove"]},

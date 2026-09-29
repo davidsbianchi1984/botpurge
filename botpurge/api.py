@@ -870,7 +870,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
                 page = ctx.pages[0] if ctx.pages else ctx.new_page()
                 page.goto(body.url, wait_until="domcontentloaded")
                 watch(svc.liveguard, uid, sid, page, x["platform"], cockpit=cockpit,
-                      executor=Executor(Pacing(0.3, 0.8, 0, 0), timeout_ms=4000, cockpit=cockpit))
+                      executor=Executor(Pacing(0.3, 0.8, 0, 0), timeout_ms=4000, cockpit=cockpit, ask_help=False))
             except Stopped:
                 svc.liveguard.stop(uid, sid)
             except Exception:

@@ -82,6 +82,7 @@ def watch(lg, user_id: str, sid: str, page, platform: str, executor=None, cockpi
     stats = {"read": 0, "removed": 0, "failed": 0}
     started = time.time()
     last_seen = time.time()
+    gone: set = set()        # people already blocked or muted: their queued messages need no second click
     if cockpit:
         cockpit.say("Live Guard is watching the chat")
     while True:
@@ -101,6 +102,9 @@ def watch(lg, user_id: str, sid: str, page, platform: str, executor=None, cockpi
         for r in (lg.feed(user_id, sid, msgs) if msgs else []):
             if not r["act"]:
                 continue
+            if r["author_id"] in gone:
+                lg.mark_applied(user_id, sid, r["event_id"])
+                continue
             prog = LIVE_ACTIONS.get((platform, r["action"])) or (LIVE_ACTIONS.get((platform, "ban")) if r["action"] == "timeout" else None)
             if not prog or executor is None:
                 continue                                  # e.g. "delete one message" where the platform has no such option
@@ -109,6 +113,8 @@ def watch(lg, user_id: str, sid: str, page, platform: str, executor=None, cockpi
             res = executor.run(page, fill(prog, {"author_name": r["author_name"], "mute_label": "5 minutes"}))
             lg.mark_applied(user_id, sid, r["event_id"], None if res.ok else (res.error or "failed"))
             stats["removed" if res.ok else "failed"] += 1
+            if res.ok and r["action"] in ("ban", "timeout"):
+                gone.add(r["author_id"])
             if cockpit:
                 cockpit.say("Live Guard is watching the chat")
         # Can't find the chat? Ask the streamer to point at one message, once, and learn the pattern.
