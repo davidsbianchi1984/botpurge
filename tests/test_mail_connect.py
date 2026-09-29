@@ -164,3 +164,14 @@ def test_cleanup_is_opt_in_and_moves_flagged_mail_to_trash(c, provider, scope, d
     assert MOVES and all(m[0] == provider for m in MOVES) and any(dest in m for m in MOVES)
     senders = client.get("/api/inbox/senders?tab=removed", headers=h).json()
     assert [s_["sender_id"] for s_ in senders] == ["renewals.team88@gmail.com"]
+
+
+def test_cleanup_only_the_selected_senders(c):
+    client, h, app = c
+    MOVES.clear()
+    url = client.post("/api/mail/gmail/connect?cleanup=true", headers=h).json()["authorize_url"]
+    client.get(f"/api/mail/callback?state={parse_qs(urlparse(url).query)['state'][0]}&code=abc")
+    r = client.post("/api/mail/clean", json={"to": "trash", "senders": ["nobody@example.com"]}, headers=h).json()
+    assert r["moved"] == 0 and r["senders"] == 0 and not MOVES          # a sender that isn't in the mailbox moves nothing
+    r = client.post("/api/mail/clean", json={"to": "trash", "senders": ["renewals.team88@gmail.com"]}, headers=h).json()
+    assert r["moved"] >= 1 and r["senders"] == 1

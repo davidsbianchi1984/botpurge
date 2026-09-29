@@ -6,7 +6,8 @@
 
 - **Uploads as downloaded:** upload the export .zip (or file) without unzipping or picking the network; Bot Purge works out which network or message type it is. Drag and drop onto the upload boxes. Picking it yourself still works.
 - **Yahoo Mail:** inbox connection, next to Gmail and Outlook. All three now check the Inbox and Spam folders.
-- **Email cleanup (optional):** with the extra permission, move every flagged sender's emails to Trash or Spam in one press. Never deleted for good.
+- **Email cleanup (optional):** with the extra permission, a summary of the flagged senders (fraud and phishing, repetitive spam, bot-style), select all or pick senders, and move their emails to Trash or Spam. Never deleted for good.
+- **Talk to your agent** also understands "be a mod for my live stream" and "set a canary trap".
 - **Your agent tab (optional extras):**
   - Teach the agent when it doesn't know how: write the steps, show it in its window, or talk it through, for removing, blocking, reporting, unfriending and live-chat moderation.
   - Talk to your agent to set what to scan ("only my TikTok followers for bots, spam and fraud"), and to fine-tune its pace, limits, default actions, trusted accounts, rescans, live-chat rules and objectives.

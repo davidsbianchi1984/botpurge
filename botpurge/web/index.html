@@ -282,9 +282,12 @@
       <div class="panel">
         <div class="row"><h2 style="margin:0">Flagged senders</h2><span style="flex:1"></span>
           <button class="small primary hidden" id="mCleanAll">🗑️ Move all flagged email to Trash</button>
+          <button class="small hidden" id="mCleanSel">🗑️ Move selected to Trash</button>
           <select id="sTab"><option value="flagged">Flagged</option><option value="whitelisted">Real people</option><option value="removed">Blocked / removed</option><option value="all">Everyone</option></select></div>
+        <p class="small" id="sSummary"></p>
+        <label class="small hidden" id="sSelAllWrap"><input type="checkbox" id="sSelAll"> Select all flagged email senders</label>
         <p class="notice small hidden" id="mCleanResult"></p>
-        <div class="table-wrap"><table class="stack"><thead><tr><th>Sender</th><th>Score</th><th>Why</th><th class="hide-sm">Messages</th><th></th></tr></thead><tbody id="sRows"></tbody></table></div>
+        <div class="table-wrap"><table class="stack"><thead><tr><th></th><th>Sender</th><th>Score</th><th>Why</th><th class="hide-sm">Messages</th><th></th></tr></thead><tbody id="sRows"></tbody></table></div>
         <div id="sDetail"></div>
       </div>
       <div class="panel">
@@ -550,6 +553,27 @@ async function loadMail() {
   state.canClean = links.some(l => l.connected && l.can_clean);
   $("mCleanAll").classList.toggle("hidden", !state.canClean);
 }
+// What the flagged senders have in common, in one line: fraud and phishing, repetitive spam, bot-style accounts.
+const SENDER_GROUPS = [["fraud & phishing", /^(brand_spoof|lookalike_domain|phishing_language|link_mismatch|raw_ip_link|free_mail_brand|auth_fail|reply_to_mismatch|fake_giveaway|solicitation)$/],
+  ["repetitive spam", /^(repeat_sender|template_across_senders|flooding)$/], ["bot-style accounts", /^(bracket_emoji|ai_artifact|canary|known_bot|generic_comment|faceless_avatar)$/]];
+function renderSenderSummary(rows) {
+  const flagged = rows.filter(r => r.status === "active" && ["likely_bot", "suspicious"].includes(r.label));
+  if ($("sTab").value !== "flagged" || !flagged.length) { $("sSummary").textContent = ""; return; }
+  const parts = SENDER_GROUPS.map(([name, rx]) => [name, flagged.filter(r => (r.reason_codes || []).some(c => rx.test(c))).length]).filter(x => x[1]);
+  const emails = flagged.filter(r => r.platform === "email").length;
+  $("sSummary").innerHTML = `<b>${flagged.length} flagged sender${flagged.length === 1 ? "" : "s"}</b>${emails ? ` (${emails} by email)` : ""}: ` +
+    parts.map(([n, c]) => `${c} ${n}`).join(" · ");
+}
+// Move the selected senders' email to Trash (checked rows), or every flagged sender's (the button above).
+$("mCleanSel").onclick = async () => {
+  const senders = [...document.querySelectorAll(".sPick:checked")].map(p => p.dataset.sid);
+  if (!senders.length) return;
+  $("mCleanSel").disabled = true;
+  try { const r = await api("/api/mail/clean", { method: "POST", headers: auth(), body: { to: "trash", senders } });
+    $("mCleanResult").textContent = `✅ Moved ${r.moved} emails from ${r.senders} selected senders to Trash. Real mail wasn't touched.`; $("mCleanResult").classList.remove("hidden");
+    loadInbox(); } catch (e) { paywalled(e); }
+  finally { $("mCleanSel").disabled = false; }
+};
 // Move every flagged sender's email to Trash: the first press asks, the second does it.
 $("mCleanAll").onclick = async () => {
   const b = $("mCleanAll");
@@ -569,16 +593,25 @@ $("mCleanAll").onclick = async () => {
 };
 async function loadInbox() {
   const rows = await api(`/api/inbox/senders?tab=${$("sTab").value}`, { headers: auth() });
+  renderSenderSummary(rows);
   $("sRows").innerHTML = rows.map(r => {
     const who = r.name || (r.handle ? "@" + r.handle : r.sender_id);
     const k = `${esc(r.platform)}|${esc(r.sender_id)}`;
-    return `<tr><td><div class="who">${avatar(who, r.sender_id)}<div><div class="n">${esc(who)}</div><div class="small muted">${esc(r.platform === "email" ? "Email · " + r.sender_id : (SOURCE_NAMES[r.platform] || r.platform))}</div>
+    const tick = r.platform === "email" && r.status === "active" ? `<input type="checkbox" class="sPick" data-sid="${esc(r.sender_id)}">` : "";
+    return `<tr><td>${tick}</td><td><div class="who">${avatar(who, r.sender_id)}<div><div class="n">${esc(who)}</div><div class="small muted">${esc(r.platform === "email" ? "Email · " + r.sender_id : (SOURCE_NAMES[r.platform] || r.platform))}</div>
         ${r.canary_hit ? `<span class="chip bad">Canary: confirmed AI bot</span>` : ""}</div></div></td>
       <td><span class="pill ${esc(r.label)}">${Math.round(r.score)}</span></td>
       <td><ul class="reasons">${r.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul></td><td class="hide-sm">${r.items}</td>
       <td><div class="row"><button class="small" data-see="${k}">Messages</button>
         ${r.status === "active" ? `<button class="small" data-sfb="${k}" data-bot="0">Real person</button><button class="small" data-block="${k}">Blocked it</button>` : `<button class="small" data-undo="${k}">Undo</button>`}</div></td></tr>`;
-  }).join("") || `<tr><td colspan="5" class="muted">Nothing here yet.</td></tr>`;
+  }).join("") || `<tr><td colspan="6" class="muted">Nothing here yet.</td></tr>`;
+  const picks = () => [...document.querySelectorAll(".sPick")];
+  $("sSelAllWrap").classList.toggle("hidden", !(state.canClean && picks().length));
+  $("sSelAll").checked = false; $("mCleanSel").classList.add("hidden");
+  const sync = () => { const n = picks().filter(p => p.checked).length; $("mCleanSel").classList.toggle("hidden", !n);
+    $("mCleanSel").textContent = `🗑️ Move ${n} selected to Trash`; $("sSelAll").checked = n && n === picks().length; };
+  $("sSelAll").onchange = () => { picks().forEach(p => p.checked = $("sSelAll").checked); sync(); };
+  picks().forEach(p => p.onchange = sync);
   const split = k => { const i = k.indexOf("|"); return [k.slice(0, i), k.slice(i + 1)]; };
   document.querySelectorAll("[data-see]").forEach(b => b.onclick = async () => {
     const [p, id] = split(b.dataset.see);
