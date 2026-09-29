@@ -1080,6 +1080,27 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         page.goto(LOGIN_URLS[platform])
         return {"opened": LOGIN_URLS[platform], "note": "Sign in in the window that opened, then close it."}
 
+    @app.post("/api/agent/apps/{platform}")
+    def agent_read_apps(platform: str, uid: str = Depends(user)):
+        """The agent opens the platform's app-permissions page and reads the list; the person confirms it before scoring."""
+        from .agent import apps as agent_apps
+
+        svc.plans.require(uid, "agent")
+        if platform not in agent_apps.APP_PAGES:
+            raise HTTPException(400, "unknown platform")
+        if not svc.agent.has_consent(uid, platform):
+            raise PermissionError(f"Consent for the agent on {platform} is needed first")
+        pw, ctx = _agent_browser()
+        try:
+            from .agent.cockpit import Cockpit
+
+            cockpit = Cockpit(ctx).install()
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            return agent_apps.read_apps(page, platform, _saved_signin(uid, platform), cockpit)
+        finally:
+            ctx.close()
+            pw.stop()
+
     @app.post("/api/removals/{job_id}/agent/run")
     def agent_run(job_id: str, uid: str = Depends(user)):
         svc.plans.require(uid, "agent")

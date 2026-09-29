@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Connected apps:** type the app names from your settings when your export doesn't include them (TikTok's never does). The upload says where to find the list instead of "nothing found".
+- **Connected apps:** type the app names from your settings when your export doesn't include them (TikTok's never does), or let the agent read them: it opens the app-permissions page in its window, signs in the way you chose (saved sign-in or hand-over), and shows what it found for you to confirm. The upload says where to find the list instead of "nothing found".
 
 ## 1.1.0
 

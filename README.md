@@ -75,7 +75,7 @@ Detection judges **behaviour, never opinions**. A flood of copy-pasted lines get
   - callback-phishing invoices, sextortion bitcoin demands, gift-card requests
 - **Live inboxes:** connect Gmail, Outlook or Yahoo Mail. Read-only by default: Protect checks the last 30 days of the Inbox and Spam folders every day with all the email rules.
 - **Email cleanup (optional):** tick "Also allow cleanup" when connecting. The flagged-senders list sums up what it found (fraud and phishing, repetitive spam, bot-style accounts); tick the senders you want, or **Select all**, and **Move selected to Trash**, or **Move all flagged email to Trash** in one press. It uses Gmail `gmail.modify`, Outlook `Mail.ReadWrite` and Yahoo `mail-w`. It only runs when you press the button, never deletes for good (undo it in your mailbox), and never touches real people's mail.
-- **Connected apps:** follower-growth, auto-like, "who viewed my profile", crypto-giveaway and DM-access apps holding access to your accounts, with the steps to revoke each.
+- **Connected apps:** follower-growth, auto-like, "who viewed my profile", crypto-giveaway and DM-access apps holding access to your accounts, with the steps to revoke each. Upload the list from your data export, type the names from your settings, or let the agent open the app-permissions page and read them (you confirm what it found).
 - **Evasion:** before any rule runs, text is normalised. Lookalike letters, zero-width characters, split links ("site . com") and stacked accents are undone, and hiding tricks count as evidence in themselves.
 
 The research behind every rule, with sources and caveats, is in [docs/detection-rules.md](docs/detection-rules.md).
