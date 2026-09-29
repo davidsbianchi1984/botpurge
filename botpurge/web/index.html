@@ -292,9 +292,12 @@
       </div>
       <div class="panel">
         <h2>Connected apps</h2>
-        <p class="small muted">Follower-growth, auto-like and "who viewed my profile" apps are bots acting through <em>your</em> account. Upload the connected-apps file from your data export: X <code>connected-application.js</code>, or Facebook/Instagram "Apps and websites".</p>
-        <div class="row"><select id="aPlatform"><option value="x">X</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok (CSV)</option></select>
-          <input type="file" id="aFile" accept=".js,.json,.csv,.zip"><button class="primary" id="aGo">Check apps</button></div>
+        <p class="small muted">Follower-growth, auto-like and "who viewed my profile" apps are bots acting through <em>your</em> account. Upload the connected-apps file from your data export (X <code>connected-application.js</code>, Facebook/Instagram "Apps and websites"), or type the app names from your settings, one per line.</p>
+        <div class="row"><select id="aPlatform"><option value="x">X</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option></select>
+          <input type="file" id="aFile" accept=".js,.json,.csv,.zip,.txt"></div>
+        <p class="small muted" id="aWhere">Where to find the list: X &gt; Settings &gt; Security and account access &gt; Apps and sessions &gt; Connected apps.</p>
+        <textarea id="aNames" rows="3" placeholder="Or type the app names here, one per line"></textarea>
+        <div class="row"><button class="primary" id="aGo">Check apps</button></div>
         <div id="aList" style="margin-top:10px"></div>
       </div>
       <div class="panel">
@@ -627,10 +630,18 @@ async function loadInbox() {
     await api("/api/inbox/status", { method: "POST", headers: auth(), body: { platform: p, sender_id: id, status: "active" } }); loadInbox(); });
   loadCanaries(); loadApps();
 }
+const APP_LIST_WHERE = {
+  x: "X > Settings > Security and account access > Apps and sessions > Connected apps.",
+  facebook: "Facebook > Settings > Apps and websites.",
+  instagram: "Instagram > Settings > Website permissions > Apps and websites.",
+  tiktok: "TikTok > Settings and privacy > Security > Manage app permissions. TikTok's data export doesn't include this list, so type the names.",
+};
+$("aPlatform").onchange = () => { $("aWhere").textContent = "Where to find the list: " + APP_LIST_WHERE[$("aPlatform").value]; };
 $("aGo").onclick = async () => {
-  const f = $("aFile").files[0]; if (!f) return toast("Choose the file first");
-  const fd = new FormData(); fd.append("file", f);
-  try { const r = await api(`/api/apps/import/${$("aPlatform").value}`, { method: "POST", form: fd, headers: auth() }); toast(`Checked ${r.apps} apps`); loadApps(); } catch (e) { paywalled(e); }
+  const f = $("aFile").files[0], names = $("aNames").value.trim();
+  if (!f && !names) return toast("Choose the file or type the app names first");
+  const fd = new FormData(); if (f) fd.append("file", f); else fd.append("names", names);
+  try { const r = await api(`/api/apps/import/${$("aPlatform").value}`, { method: "POST", form: fd, headers: auth() }); toast(`Checked ${r.apps} apps`); $("aNames").value = ""; loadApps(); } catch (e) { paywalled(e); }
 };
 async function loadApps() {
   const apps = await api("/api/apps", { headers: auth() });

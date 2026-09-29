@@ -126,3 +126,27 @@ def test_facebook_apps_loose_keys():
     liker = next(a for a in apps if a.name.startswith("Auto"))
     assert score_app(liker, apps).label in ("suspicious", "low_confidence", "likely_bot")
 
+
+
+def test_tiktok_export_zip_says_where_the_list_is():
+    import io as _io
+    import zipfile as _zip
+    import pytest as _pt
+    from botpurge.importers import ImportError_
+    buf = _io.BytesIO()
+    with _zip.ZipFile(buf, "w") as zf:
+        zf.writestr("user_data_tiktok.json", json.dumps({"Profile": {"Profile Information": {"ProfileMap": {"userName": "me"}}}}))
+    with _pt.raises(ImportError_) as exc:
+        import_apps("tiktok", "TikTok_Data_1790631954.zip", buf.getvalue())
+    assert "Manage app permissions" in str(exc.value)
+
+
+def test_typed_app_names(client, user):
+    r = client.post("/api/apps/import/tiktok", headers=hdr(user), data={"names": "InstaFollowers Pro Boost\n- Who viewed my profile - read, write\n\nCapCut"})
+    assert r.status_code == 200 and r.json()["apps"] == 3
+    listed = {a["name"]: a for a in client.get("/api/apps", headers=hdr(user)).json()}
+    assert listed["Who viewed my profile"]["permissions"] == ["read", "write"]
+    assert listed["Who viewed my profile"]["label"] == "likely_bot"
+    assert listed["CapCut"]["label"] == "looks_real"
+    r = client.post("/api/apps/import/tiktok", headers=hdr(user), data={"names": "  "})
+    assert r.status_code == 400 and "at least one" in r.json()["detail"]

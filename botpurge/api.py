@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -29,7 +29,7 @@ from .importers import EXPORT_HELP, ImportError_, detect_platform, import_export
 from .instructions_store import InstructionStore
 from .models import Platform
 from .agent.runner import AgentService
-from .apps import import_apps
+from .apps import import_apps, import_app_names
 from . import __version__
 from .billing import Billing, BillingError
 from .release import check_for_update, store_url
@@ -809,10 +809,13 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     # Connected apps
     @app.post("/api/apps/import/{platform}")
-    async def apps_import(platform: str, file: UploadFile = File(...), uid: str = Depends(user)):
-        data = await file.read()
+    async def apps_import(platform: str, file: Optional[UploadFile] = File(None), names: str = Form(""), uid: str = Depends(user)):
+        """A connected-apps file from a data export, or the app names typed one per line."""
         try:
-            found = import_apps(platform, file.filename or "upload", data)
+            if file is not None and file.filename:
+                found = import_apps(platform, file.filename, await file.read())
+            else:
+                found = import_app_names(platform, names)
         except ImportError_ as exc:
             raise HTTPException(400, str(exc))
         return svc.apps.store(uid, found)
