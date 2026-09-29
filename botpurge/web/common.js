@@ -49,10 +49,11 @@ function fmtDate(s) {
 }
 
 const LABELS = { likely_bot: "Likely bot", suspicious: "Suspicious", low_confidence: "Low confidence", looks_real: "Looks real" };
-const PLATFORM_NAMES = { x: "X", facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok", linkedin: "LinkedIn" };
+const PLATFORM_NAMES = { x: "X", facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok", linkedin: "LinkedIn", kick: "Kick" };
 // Where a message came from: the social platforms plus texts, email and live-stream sites.
 const SOURCE_NAMES = { ...PLATFORM_NAMES, sms: "Text message", email: "Email", youtube: "YouTube", twitch: "Twitch", kick: "Kick", other: "Other" };
-const ACTION_NAMES = { unfriend: "Unfriend", remove_follower: "Remove follower", unfollow: "Unfollow", block: "Block", report: "Report" };
+const ACTION_NAMES = { unfriend: "Unfriend", remove_follower: "Remove follower", unfollow: "Unfollow", block: "Block", report: "Report",
+  live_ban: "Ban from my live", live_timeout: "Mute / time out in my live", live_delete: "Delete a chat message" };
 const PLATFORM_ACTIONS = {
   x: ["remove_follower", "unfollow", "block", "report"], facebook: ["unfriend", "remove_follower", "unfollow", "block", "report"],
   instagram: ["remove_follower", "unfollow", "block", "report"], tiktok: ["remove_follower", "unfollow", "block", "report"], linkedin: ["unfriend", "unfollow", "block", "report"],

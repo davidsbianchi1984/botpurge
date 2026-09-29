@@ -57,6 +57,14 @@ CREATE TABLE IF NOT EXISTS agent_learned (         -- buttons a person showed th
     label TEXT NOT NULL, at TEXT NOT NULL,
     PRIMARY KEY (user_id, platform, action, step)
 );
+CREATE TABLE IF NOT EXISTS agent_prefs (           -- how the person tuned their agent (pace, limits, objectives, live rules)
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    prefs_json TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_chat (            -- the conversation with the agent
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS stripe_prices (plan TEXT PRIMARY KEY, price_id TEXT NOT NULL);   -- each plan's Stripe Price
 
 CREATE TABLE IF NOT EXISTS purchases (

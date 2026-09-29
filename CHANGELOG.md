@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Uploads as downloaded:** upload the export .zip (or file) without unzipping or picking the network; Bot Purge works out which network or message type it is. Drag and drop onto the upload boxes. Picking it yourself still works.
+- **Yahoo Mail:** read-only inbox connection, next to Gmail and Outlook.
+- **Your agent tab (optional extras):**
+  - Teach the agent when it doesn't know how: write the steps, show it in its window, or talk it through, for removing, blocking, reporting, unfriending and live-chat moderation.
+  - Talk to your agent to fine-tune its pace, limits, default actions, trusted accounts, rescans, live-chat rules and objectives.
+  - Optional saved sign-in in the desktop app; codes and puzzles are handed to you.
+
 ## 1.0.0
 
 - **Scan:** friends, followers and following on X, Facebook, Instagram, TikTok and LinkedIn, with antivirus-style threat counts and plain-language reasons.

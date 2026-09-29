@@ -13,9 +13,10 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-PLATFORMS = ("x", "facebook", "instagram", "tiktok", "linkedin")
+PLATFORMS = ("x", "facebook", "instagram", "tiktok", "linkedin", "kick")
 DEVICES = ("web", "ios", "android")
 ACTIONS = ("unfriend", "remove_follower", "unfollow", "block", "report")
+LIVE_ACTION_NAMES = ("live_ban", "live_timeout", "live_delete")      # moderating a live chat; taught or written by the streamer
 
 # Which actions make sense on which platform.
 PLATFORM_ACTIONS = {
@@ -58,7 +59,7 @@ class InstructionSet(BaseModel):
     @field_validator("action")
     @classmethod
     def _a(cls, v: str) -> str:
-        if v not in ACTIONS:
+        if v not in ACTIONS + LIVE_ACTION_NAMES:
             raise ValueError(f"unknown action {v}")
         return v
 

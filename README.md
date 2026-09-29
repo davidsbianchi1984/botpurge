@@ -2,7 +2,7 @@
 
 **Bots, fakes and scammers, gone.** Bot Purge scans your followers, friends and the accounts you follow, plus your DMs, texts, email, connected apps and live-stream chats. It shows every threat it finds, antivirus-style ("37 threats found"), and removes them. For people and creators, and for companies that want to purge bots from their whole platform.
 
-It never asks for a social media password. X connects through its official sign-in; everything else is read from the data export each platform lets you download, or from a phone or mail backup on your own computer.
+It never needs a social media password. X connects through its official sign-in; everything else is read from the data export each platform lets you download, or from a phone or mail backup on your own computer.
 
 ## Screenshots
 
@@ -128,7 +128,11 @@ The agent removes, blocks and reports accounts for you in its own browser profil
   - Press **Take over** in its top bar, or just click or type in its window, and it pauses at once. Press **Resume** to hand back.
 - **It asks when it's stuck:** if a platform has moved or renamed a button, the agent asks you to click it. It finishes that step and remembers the new label for every account after.
 - **Teach mode:** on the Removal steps page, press **Teach the agent** and do the process once: clicks, typing, shortcuts, menus, new windows. Your steps are saved as plain-language instructions you can edit, and the agent follows them from then on. Passwords and codes are never recorded.
-- **Pace and limits:** it keeps a human pace and stays under an hourly cap per platform.
+- **Your agent tab:** extra choices, all optional. The ways above keep working as they are.
+  - **When the agent doesn't know how:** pick the platform and what to do, including removing, blocking, reporting, unfriending, and banning, muting or deleting in your live chat. Then either **write the steps**, **show the agent** (a Bot Purge window opens and you share your screen and cursor with it while you do it once), or **talk it through**. Live Guard follows your own live steps too. When a done-for-you run can't finish, the Removal queue offers the same three choices.
+  - **Talk to your agent:** fine-tune it in plain words: "go slower", "only 20 at a time", "always block too", "never remove @jenny_r", "scan every week", "keep politics out of my live chat", "my goal is to clear out crypto scammers", or directions like: On TikTok, to block: click "Share", then click "Block". It changes only settings you could change yourself and says exactly what changed. With `ANTHROPIC_API_KEY` set on the server, Claude understands the conversation (model `BOTPURGE_AGENT_MODEL`); otherwise a built-in reader handles the common requests offline.
+  - **How it signs in:** sign in yourself in the agent's window (nothing saved), or, in the desktop app only, save your username and password. They stay sealed on your computer and are only typed into the platform's own login page. A code, puzzle or "was this you?" check is handed to you.
+- **Pace and limits:** it keeps a human pace (gentle, normal or quick, as you tell it) and stays under an hourly cap per platform.
 - **Stops on pushback:** at the first "Action blocked", "Try again later" or CAPTCHA, it stops the whole job and tells you.
 - **Consent first:** nothing runs until you accept a plain notice that the platforms forbid automation and can restrict accounts. The exact text you agreed to is stored.
 - **Planner hook:** a smarter decision-maker can take over when a button has moved.
@@ -189,6 +193,7 @@ pyinstaller packaging/botpurge.spec   # build the desktop app locally
 | `BOTPURGE_ADMIN_TOKEN` | Moderation of community instructions, creating purge-console tenants, `/api/admin/metrics` |
 | `X_CLIENT_ID`, `X_REDIRECT_URI` | X OAuth app for one-click removal |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID` / `MS_CLIENT_SECRET`, `YAHOO_CLIENT_ID` / `YAHOO_CLIENT_SECRET` | Gmail, Outlook and Yahoo Mail read-only connections |
+| `ANTHROPIC_API_KEY`, `BOTPURGE_AGENT_MODEL` | Optional: Claude understands "Talk to your agent" (otherwise the built-in reader) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `BOTPURGE_LICENSE_PRIVATE`, `BOTPURGE_PUBLIC_URL` | The store (see Payments) |
 | `BOTPURGE_STORE_URL`, `BOTPURGE_LICENSE_PUBLIC` | Where a desktop copy buys and checks keys (release builds bake these in) |
 | `BOTPURGE_AGENT_BROWSER` | Force the agent's browser (`chrome`, `msedge`) |

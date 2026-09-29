@@ -17,7 +17,7 @@ import json
 import re
 import zipfile
 from datetime import datetime, timezone
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 
 from .models import Connection, Direction, Platform
 
@@ -230,6 +230,47 @@ _PARSERS = {
 
 MAX_UPLOAD = 200 * 1024 * 1024
 MAX_UNCOMPRESSED = 500 * 1024 * 1024
+
+
+_NAME_HINTS = [(re.compile(r"tiktok", re.I), Platform.tiktok), (re.compile(r"instagram", re.I), Platform.instagram),
+               (re.compile(r"facebook", re.I), Platform.facebook), (re.compile(r"linkedin|connections\.csv", re.I), Platform.linkedin),
+               (re.compile(r"twitter|(^|/)data/(follower|following)\.js$", re.I), Platform.x)]
+
+
+def detect_platform(filename: str, data: bytes) -> Optional[Platform]:
+    """Which network an export came from, so people can upload the file exactly as they downloaded it."""
+    names = [filename or ""]
+    if data[:2] == b"PK":
+        try:
+            names += [i.filename for i in zipfile.ZipFile(io.BytesIO(data)).infolist() if not i.is_dir()]
+        except zipfile.BadZipFile:
+            return None
+        inside = "\n".join(names[1:])
+        if re.search(r"followers_and_following/|(^|/)followers_\d+\.json$", inside, re.I | re.M):
+            return Platform.instagram
+        if re.search(r"(^|/)(your_friends|friends)[^/]*\.json$|friends_and_followers/", inside, re.I | re.M):
+            return Platform.facebook
+        if re.search(r"user_data(_tiktok)?\.json$", inside, re.I | re.M):
+            return Platform.tiktok
+        if re.search(r"(^|/)connections\.csv$", inside, re.I | re.M):
+            return Platform.linkedin
+        if re.search(r"(^|/)(follower|following)\.js$", inside, re.I | re.M):
+            return Platform.x
+    head = data[:4000].decode("utf-8", "ignore")
+    if "window.YTD.follow" in head:
+        return Platform.x
+    if re.search(r"Connected On", head) and re.search(r"First Name", head):
+        return Platform.linkedin
+    if re.search(r'"(FansList|Follower List|Following List)"|^\s*Date:.*\n\s*User(name|Name):', head, re.M):
+        return Platform.tiktok
+    if "string_list_data" in head or "relationships_follow" in head:
+        return Platform.instagram
+    if re.search(r'"(friends_v2|following_v3|followers_v2)"', head):
+        return Platform.facebook
+    for rx, plat in _NAME_HINTS:
+        if rx.search(filename or ""):
+            return plat
+    return None
 
 
 def import_export(platform: Platform, filename: str, data: bytes) -> list[Connection]:
