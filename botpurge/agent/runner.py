@@ -275,7 +275,13 @@ class Executor:
                         if self.cockpit:
                             self.cockpit.point_at(cur, loc)
                         if op in ("click", "select"):
-                            loc.click(timeout=self.timeout)
+                            try:
+                                loc.click(timeout=self.timeout)
+                            except Exception:
+                                # Menus slide and fade: look again for the target now on screen, once.
+                                cur.wait_for_timeout(150)
+                                loc = self._locate(cur, s) if op == "click" else loc
+                                loc.click(timeout=self.timeout)
                         elif op == "hover":
                             loc.hover(timeout=self.timeout)
                         elif op == "fill":

@@ -34,6 +34,7 @@ from typing import Callable, Optional
 
 import httpx
 
+from . import rules
 from .messages import WEIGHTS, Message, MessageScorer, _norm
 
 PROTECTED_BADGES = {"broadcaster", "moderator", "vip", "owner", "staff", "admin"}
@@ -68,6 +69,41 @@ class Policy:
     max_actions_per_min: int = 30
     trust_subscribers: bool = True
     protected_names: list = field(default_factory=list)   # the streamer's and moderators' names, to catch impersonators
+    # The streamer's own chat rules. Bot and scam detection never looks at opinions; these are
+    # topic and conduct rules the streamer switches on, and they apply the same to every side.
+    no_politics: bool = False                              # keep political talk out of chat, from any side
+    no_abuse: bool = False                                 # insults and personal attacks, aimed at anyone
+    blocked_phrases: list = field(default_factory=list)    # the streamer's own words and phrases
+
+
+POLITICS = re.compile(
+    r"\b(trump\w*|biden|harris|kamala|obama|maga|democrats?|dems|republicans?|gop|liberals?|libs|libtards?|conservatives?|"
+    r"leftists?|right[- ]?wing\w*|left[- ]?wing\w*|antifa|woke|potus|president|congress|senate|elections?|impeach\w*|"
+    r"vote\s+(blue|red)|(blue|red)\s+wave|epstein|release\s+the\s+(files|list)|deep\s+state|the\s+party\s+whose|"
+    # slogans from every side
+    r"defund(\s+the)?\s*(police|cops|ice)?|abolish\s+(the\s+)?(ice|police)|ice\s+(raids?|agents?)|no\s+kings|the\s+resistance|"
+    r"back\s+the\s+blue|build\s+the\s+wall|deport\s+(them|em)\s+all|stop\s+the\s+steal|let'?s\s+go\s+brandon|"
+    r"lock\s+(her|him)\s+up|drain\s+the\s+swamp|blue\s+lives|all\s+lives|black\s+lives|free\s+palestine|stand\s+with\s+israel)\b")
+ABUSE = re.compile(
+    r"\b(pedo\w*|p\s*d\s*files?|pdf\s*files?|g?rapists?|groomers?|traitors?|nazis?|kys|kill\s+your\s*self|scumbags?|"
+    r"whores?|sluts?|retard\w*|pieces?\s+of\s+(shit|trash))\b")
+
+
+def chat_rule(policy: Policy, text: str) -> Optional[str]:
+    """Which of the streamer's own chat rules a message breaks, if any (disguised spellings included)."""
+    from . import rules
+
+    c = rules.normalize(text)
+    t = " ".join(re.sub(r"[^\w\s']", " ", (c.leet or "") + " " + (c.text or "").lower()).split())
+    for phrase in policy.blocked_phrases or []:
+        p = " ".join(re.sub(r"[^\w\s']", " ", rules.normalize(str(phrase)).leet or "").split())
+        if p and re.search(r"(?<!\w)" + re.escape(p) + r"(?!\w)", t):
+            return f"Your chat rule: blocked words (\"{phrase}\")"
+    if policy.no_abuse and ABUSE.search(t):
+        return "Your chat rule: no insults or personal attacks"
+    if policy.no_politics and POLITICS.search(t):
+        return "Your chat rule: no political talk in this chat"
+    return None
 
 
 class Judge:
@@ -114,6 +150,12 @@ class Judge:
                 pitch = "solicitation" in sigs or "link_drop" in sigs or "fake_giveaway" in sigs
                 sigs["coordinated_script"] = (1.0 if pitch else 0.5,
                                               f"Same scripted line as {len(authors) - 1} other accounts just now")
+        rule = chat_rule(self.policy, m.text)
+        if rule:
+            sigs["chat_rule"] = (1.0, rule)
+        bait = rules.evaluate_username(m.author_name or m.author_id)
+        if bait:
+            sigs["bait_name"] = (1.0, bait[0].reason)
         imp = impersonates(m.author_name or m.author_id, self.policy.protected_names)
         if imp:
             sigs["impersonation"] = (1.0, f"Name imitates {imp}, but it's a different account")
@@ -122,7 +164,7 @@ class Judge:
         elif key in self.scorer.known_bots:
             sigs["known_bot"] = (1.0, "Already flagged as a bot in your followers")
 
-        weights = {**WEIGHTS, "confirmed_bot": 0.85, "coordinated_script": 0.8, "impersonation": 0.85}
+        weights = {**WEIGHTS, "confirmed_bot": 0.85, "coordinated_script": 0.8, "impersonation": 0.85, "bait_name": 0.5, "chat_rule": 0.7}
         reasons = sorted(((weights[c] * s, t, c) for c, (s, t) in sigs.items()), reverse=True)
         p = 1.0
         for w, _, _ in reasons:

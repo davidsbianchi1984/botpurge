@@ -258,6 +258,15 @@
           <label class="f">Channel / live chat ID<input id="lgChannel" placeholder="your channel name"></label>
           <label class="f">Your name and your mods' names<input id="lgNames" placeholder="YourName, ModOne, ModTwo"></label>
           <label class="f">Mode<select id="lgMode"><option value="watch">Watch (log only)</option><option value="protect">Protect (act)</option></select></label>
+        </div>
+        <details class="small" style="margin:6px 0"><summary><b>Your chat rules</b> (optional)</summary>
+          <p class="small muted">Bots and scams are always caught. These rules are yours to switch on for your own chat, and they apply the same to everyone, whatever side they're on.</p>
+          <label><input type="checkbox" id="lgNoPolitics"> Keep political talk out of my chat (all sides)</label><br>
+          <label><input type="checkbox" id="lgNoAbuse"> Remove insults and personal attacks (at anyone)</label>
+          <label class="f" style="margin-top:6px">Words or phrases to remove (comma-separated; disguised spellings are caught too)
+            <input id="lgWords" placeholder="e.g. spoilers, another streamer's name"></label>
+        </details>
+        <div class="row">
           <button class="primary" id="lgStart" style="align-self:end">Start Live Guard</button>
         </div>
         <p class="small muted" id="lgHow"></p>
@@ -371,7 +380,9 @@ async function loadLive() {
 $("lgStart").onclick = async () => {
   const names = $("lgNames").value.split(",").map(x => x.trim()).filter(Boolean);
   try {
-    const sess = await api("/api/liveguard/sessions", { method: "POST", headers: auth(), body: { platform: $("lgPlatform").value, channel: $("lgChannel").value || "My live", policy: { mode: $("lgMode").value, protected_names: names } } });
+    const words = $("lgWords").value.split(",").map(x => x.trim()).filter(Boolean);
+    const sess = await api("/api/liveguard/sessions", { method: "POST", headers: auth(), body: { platform: $("lgPlatform").value, channel: $("lgChannel").value || "My live",
+      policy: { mode: $("lgMode").value, protected_names: names, no_politics: $("lgNoPolitics").checked, no_abuse: $("lgNoAbuse").checked, blocked_phrases: words } } });
     toast("Live Guard is on"); lgCurrent = sess.id; loadLive();
   } catch (e) { paywalled(e); }
 };

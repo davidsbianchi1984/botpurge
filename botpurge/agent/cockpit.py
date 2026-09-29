@@ -150,6 +150,7 @@ class Cockpit:
     skip: bool = False
     person: Optional[object] = None          # tests: a stand-in for the person, called while the agent waits
     msg: str = "Bot Purge agent is working…"
+    glide_ms: int = 500                      # how long the agent's cursor takes to reach a button
     _installed: bool = False
     _later: Optional[tuple] = None
 
@@ -235,8 +236,9 @@ class Cockpit:
         try:
             b = loc.bounding_box()
             if b:
-                page.evaluate("([x, y]) => window.__bp && window.__bp.point(x, y)", [b["x"] + b["width"] / 2, b["y"] + b["height"] / 2])
-                page.wait_for_timeout(500)
+                page.evaluate("([x, y, ms]) => { const c = document.getElementById('__bpCur'); if (c) c.style.transitionDuration = ms + 'ms';"
+                              " window.__bp && window.__bp.point(x, y); }", [b["x"] + b["width"] / 2, b["y"] + b["height"] / 2, self.glide_ms])
+                page.wait_for_timeout(self.glide_ms)
         except Exception:
             pass
 

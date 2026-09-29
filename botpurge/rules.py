@@ -113,7 +113,7 @@ def R(pattern: str) -> re.Pattern:
 
 
 CLAIM_CONTACT = R(r"\b(telegram|t\.me|whats ?app|wa\.me|signal|snap(chat)?|kik|dm me|message me|text me|contact me|inbox me|link in (my )?bio|check (my )?bio)\b")
-MONEY = R(r"(\$\s?\d[\d,.]*\s?k?\b|\b\d[\d,.]*\s?(k|usd|usdt|dollars|btc|eth|bitcoin|coins|gifts?)\b|\biphone\b|\bps5\b|gift\s?card)")
+MONEY = R(r"(\$\s?\d[\d,.]*\s?k?\b|\b\d[\d,.]*\s?(k|usd|usdt|dollars|btc|eth|bitcoin|coins|gifts?|grand|bands|racks)\b|\biphone\b|\bps5\b|gift\s?card)")
 
 RULES: list[Rule] = [
     # ---- live chat and comments ----------------------------------------------------
@@ -126,12 +126,19 @@ RULES: list[Rule] = [
     Rule("claim_prize_dm", "prize_scam", "strong", "Asks you to message them to claim a prize",
          R(r"\b(dm|message|text|contact|inbox)\s+me\b.{0,30}\b(claim|prize|reward|winnings|receive)\b")),
     Rule("first_n_prize", "prize_scam", "strong", "\"First N people / everyone who types X gets $\" prize bait",
-         R(r"\b(first|next)\s+\d{1,4}\s+(people|viewers|users|ppl|persons|followers)\b|\b(everyone|anyone)\s+who\s+(comments?|types?|follows?|dms?)\b|"
+         R(r"\b(first|next|top)\s+\d{1,4}\s+(people|viewers|users|ppl|persons|followers)\b|\b(1st|first|any|every|each)\s+(person|people|one|viewer)\s+(to|who)\b|\b(message|dm|text|inbox)\s+me\s+[\"'“]?\w{2,15}[\"'”]?\s*(to|and)?\s*(get|win|claim|receive)?\b.{0,0}(?=.*\b(paying|pay|giving|send|sending|get|win)\b)|\b(everyone|anyone)\s+who\s+(comments?|types?|follows?|dms?)\b|"
            r"\b(type|comment|say)\s+[\"'“]?\w{1,15}[\"'”]?\s+(to|and)\s+(get|win|claim|receive)\b"), also=MONEY),
+    Rule("pay_to_message", "prize_scam", "strong", "Offers money to whoever messages them (the \"$7,000 to message me\" scam)",
+         R(r"\b(message|dm|text|inbox|pm|hit)\s+me\b"),
+         also=R(r"\b(paying|giving|giving away|sending|i'?ll\s+(pay|send|give)|i\s+(will|am)\s+(pay|send|giv)\w*)\b.{0,40}"
+                r"(\$\s?\d|\b\d[\d,.]*\s?(k|grand|bands|usd|dollars)\b)|"
+                r"(\$\s?\d[\d,.]*\s?k?|\b\d[\d,.]*\s?(k|grand|bands)\b)\s*(for|to)\s+(the\s+)?(any|every|each|first|1st|anyone|whoever)\b"),
+         kinds=SOCIAL),
     Rule("fake_gift_claim", "prize_scam", "strong", "Claims to have sent you a gift or donation, then points you elsewhere",
          R(r"\b(i('| a)?m|i just|just)\s+(donat\w+|sent|gift\w*)\b.{0,80}\b(dm|bio|profile|follow me|telegram|whats ?app)\b")),
     Rule("crypto_doubling", "crypto_scam", "strong", "Promises to double or multiply crypto you send",
-         R(r"\b(double|2x|x2|triple|multiply)\b.{0,40}\b(btc|bitcoin|eth|ethereum|usdt|sol|xrp|doge|crypto|coins?)\b|\bsend\b.{0,30}\b(back|return)\b.{0,20}\b(double|2x)\b")),
+         R(r"\b(double|2x|x2|triple|multiply)\b.{0,40}\b(btc|bitcoin|eth|ethereum|usdt|sol|xrp|doge|crypto|coins?)\b|\bsend\b.{0,30}\b(back|return)\b.{0,20}\b(double|2x)\b|"
+           r"\bsend\s+[\d.]+\s*(btc|bitcoin|eth|usdt|sol|xrp|doge)\b.{0,40}\b(get|receive)\s+[\d.]+\s*(btc|bitcoin|eth|usdt|sol|xrp|doge)\b")),
     Rule("wallet_address", "crypto_scam", "strong", "Posts a crypto wallet address",
          R(r"\b(bc1[ac-hj-np-z02-9]{11,71}|0x[a-f0-9]{40}|T[1-9A-HJ-NP-Za-km-z]{33})\b"), kinds=SOCIAL | PRIVATE, on="raw"),
     Rule("celebrity_giveaway", "crypto_scam", "medium", "Celebrity or exchange \"giveaway\" (a classic hijacked-stream scam)",
@@ -154,6 +161,9 @@ RULES: list[Rule] = [
          R(r"\b(i|we)\s+(just\s+)?(made|earned|received|withdrew|profited|got paid)\s+(over\s+)?\$\s?\d[\d,.]*\s*k?\b.{0,80}"
            r"\b(trading|invest\w*|crypto|forex|bitcoin|btc|coach|mentor|platform|advis[eo]r|expert|account manager|signals?)\b"),
          kinds=SOCIAL | PRIVATE),
+    Rule("text_art_flood", "flood", "strong", "Giant letters drawn with symbols (text art) that swamp the chat",
+         R("(?:[\u2500-\u259F\u2800-\u28FF\u25A0-\u25FF][^\u2500-\u259F\u2800-\u28FF\u25A0-\u25FF]{0,8}){14,}"),
+         kinds=SOCIAL, on="raw"),
     Rule("link_spam_template", "link_spam", "strong", "Link-bait template (\"finally it's here\", \"thank me later\", \"full video on my page\")",
          R(r"\b(finally it'?s here|it'?s finally here|i think you'?re looking for this|here is the (full|recommended) (video|clip)|"
            r"link to the clip|thank me later|full video is (up )?on my (page|profile|channel)|check out the full|here is the backup)\b"),
@@ -204,6 +214,9 @@ RULES: list[Rule] = [
     Rule("job_pay_offer", "job_scam", "strong", "Unsolicited easy-money job offer",
          R(r"\$\s?\d{2,4}\s*(-|to|~)?\s*\$?\d{0,4}\s*(/|per|a)\s*(day|hour|hr)\b"),
          also=R(r"\b(remote|part[-\s]?time|flexible|work\s+from\s+home|no\s+experience|online\s+job)\b"), kinds=PRIVATE),
+    Rule("easy_money_pitch", "job_scam", "strong", "\"Make $500 a day from home\" pitch that sends you to Telegram, WhatsApp or DMs",
+         R(r"\b(make|earn|making|earning)\s+(up\s+to\s+)?\$\s?\d[\d,.]*\s*k?\s*(/|per|a|every)\s*(day|week|hour|hr)\b"),
+         also=R(r"\b(telegram|whats\s?app|dm\s+me|message\s+me|text\s+me|link\s+in\s+(my\s+)?bio|check\s+my\s+bio)\b"), kinds=SOCIAL),
     Rule("task_scam", "job_scam", "strong", "\"Get paid to like videos / rate products\" task scam",
          R(r"\b(like\s+(videos|posts)|rate\s+(products|hotels|apps)|app\s+optimi[sz]ation|boost\s+(products|data)|complete\s+\d+\s+tasks|commission\s+per\s+task|merchant\s+tasks?)\b"),
          kinds=PRIVATE | frozenset({"comment"})),
@@ -362,7 +375,7 @@ def weights() -> dict[str, float]:
 
 BAIT_NAME = R(r"(on telegram|via telegram|telegram me|tlgrm|on nicegram|on instagram|on ig\b|via ig\b|whats ?app me|text me on|via gmail|a gmail com|"
               r"check my cha|see my cha|visit my cha|go to my cha|check out my|on my profile|tap me|sub 4 sub|subs to me|im subbing|"
-              r"dont (read|look( at)?) my|free gift|everyone who|with (o|no) vid|without any vid|subs challenge)")
+              r"dont (read|look( at)?) my|free gift|everyone who|with (o|no) vid|without any vid|subs challenge|^dm me\b|\bdm me (for|with|now|asap)\b|message me for)")
 PINNED = R(r"pinned\s*by")
 
 
