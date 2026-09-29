@@ -1,0 +1,35 @@
+name: Deploy website
+
+# Updates www.botpurge.online after every merge to main (or when run by hand).
+# Needs repository secrets VPS_HOST (the server's IP) and VPS_SSH_KEY (a private key allowed to log in as root);
+# until they're added, this workflow does nothing.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      HAS_SERVER: ${{ secrets.VPS_HOST != '' && secrets.VPS_SSH_KEY != '' }}
+    steps:
+      - name: Skip (server not set up yet)
+        if: env.HAS_SERVER != 'true'
+        run: echo "Add the VPS_HOST and VPS_SSH_KEY secrets to deploy automatically."
+      - name: Deploy over SSH
+        if: env.HAS_SERVER == 'true'
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null key && printf '%s\n' "$VPS_SSH_KEY" > key
+          ssh -i key -o StrictHostKeyChecking=accept-new root@"$VPS_HOST" \
+            'cd /opt/botpurge && git pull --ff-only && cd deploy && docker compose up -d --build && docker image prune -f'
+          rm -f key
+      - name: Check the site answers
+        if: env.HAS_SERVER == 'true'
+        run: |
+          for i in $(seq 1 30); do curl -sf https://www.botpurge.online/api/health && exit 0; sleep 5; done; exit 1

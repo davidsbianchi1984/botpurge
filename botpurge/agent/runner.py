@@ -10,7 +10,9 @@ Safety rails, all enforced here:
     into a restriction.
 
 The browser is a dedicated profile on the customer's computer that they log
-into themselves; Bot Purge never sees or stores a password.
+into themselves; Bot Purge never sees or stores a password. With a cockpit
+(``cockpit.py``) the customer watches the agent's cursor, can take over at any
+moment, and is asked to show the agent any button it can't find.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from .cockpit import Skipped, Stopped, learned_program
 from .programs import fill, program_for
 
 BLOCK_SIGNS = re.compile(
@@ -63,16 +66,38 @@ class StepResult:
     failed_step: Optional[int] = None
     error: str = ""
     log: list[str] = field(default_factory=list)
+    learned: dict = field(default_factory=dict)   # step index -> label the person showed the agent
+
+
+class _DoneByPerson(Exception):
+    """The person did this step for the agent (it asked for help)."""
 
 
 class Executor:
     """Executes one program on a Playwright page."""
 
     def __init__(self, pacing: Optional[Pacing] = None, planner: Optional[Callable[[str, dict], Optional[dict]]] = None,
-                 timeout_ms: int = 8000):
+                 timeout_ms: int = 8000, cockpit=None):
         self.pacing = pacing or Pacing()
         self.planner = planner          # (visible_text, failed_step) -> replacement step or None
         self.timeout = timeout_ms
+        self.cockpit = cockpit          # visible cursor, take-over and ask-for-help (see cockpit.py)
+
+    def _begin(self, page) -> None:
+        """Wait while the person is in control, then mark what follows as the agent's own input."""
+        cp = self.cockpit
+        if not cp:
+            return
+        while True:
+            cp.checkpoint(page)
+            cp.acting(page, True)
+            if cp.state == "run":          # a take-over that arrived meanwhile wins
+                return
+            cp.acting(page, False)
+
+    def _end(self, page) -> None:
+        if self.cockpit:
+            self.cockpit.acting(page, False)
 
     def _locate(self, page, s: dict):
         if s.get("any"):
@@ -148,6 +173,7 @@ class Executor:
             page.context.on("dialog", lambda d: d.accept() if accept else d.dismiss())
         for i, s in enumerate(program):
             try:
+                self._begin(cur)
                 op = s["op"]
                 if op == "goto":
                     cur.goto(s["url"], wait_until="domcontentloaded")
@@ -217,12 +243,21 @@ class Executor:
                             loc.wait_for(state="visible", timeout=self.timeout)
                         except Exception:
                             alt = self.planner(cur.locator("body").inner_text()[:6000], s) if self.planner else None
+                            if not alt and self.cockpit and op in ("click", "select", "hover"):
+                                self._end(cur)
+                                picked = self.cockpit.ask_help(cur, s)
+                                if picked:
+                                    res.learned[i] = (picked.get("text") or "").strip()
+                                    res.log.append(f"step {i}: you showed me '{res.learned[i]}'")
+                                    raise _DoneByPerson()
                             if not alt:
                                 raise
                             res.log.append(f"step {i}: planner replaced {s} with {alt}")
                             s = alt
                             loc = self._locate(cur, s)
                             loc.wait_for(state="visible", timeout=self.timeout)
+                        if self.cockpit:
+                            self.cockpit.point_at(cur, loc)
                         if op in ("click", "select"):
                             loc.click()
                         elif op == "hover":
@@ -236,7 +271,13 @@ class Executor:
                 else:
                     raise ValueError(f"unknown step {op}")
                 res.log.append(f"step {i}: {op} ok")
+            except _DoneByPerson:
+                pass
+            except (Stopped, Skipped):
+                self._end(cur)
+                raise
             except Exception as exc:
+                self._end(cur)
                 if s.get("optional") and not self._pushback(cur):
                     res.log.append(f"step {i}: optional {op} skipped (not on this screen)")
                     continue
@@ -244,6 +285,7 @@ class Executor:
                 res.failed_step, res.error = i, (why or f"step {i} ({s.get('op')} {s.get('text') or s.get('name') or s.get('keys') or s.get('option') or ''}) failed: {str(exc)[:150]}")
                 res.blocked, res.needs_login = bool(why and why.startswith("blocked")), why == "login"
                 return res
+            self._end(cur)
             why = self._pushback(cur)
             if why:
                 res.failed_step, res.error = i, why
@@ -301,6 +343,8 @@ class AgentService:
         ex = executor or Executor()
         cap = HOURLY_CAP.get(job["platform"], 20)
         done = 0
+        learned = self.learned(user_id, job["platform"])
+        queued = [it for it in job["items"] if it["status"] == "queued"]
         for it in job["items"]:
             if done >= max_items:
                 break
@@ -312,12 +356,27 @@ class AgentService:
                 self._alert(user_id, f"Paused at the hourly limit for {job['platform']} to keep your account safe. It resumes on its own.")
                 return {**self.removal.job(user_id, job_id), "paused_for": "hourly_cap"}
             prog = program_for(it["platform"], it["action"], (custom_steps or {}).get(it["action"]))
+            prog = learned_program(prog, learned.get(it["action"], {}))
             if it["action"] == "report" and self._done_this_hour(user_id, job["platform"], reports=True) >= REPORT_HOURLY_CAP:
                 self._alert(user_id, f"Paused at {REPORT_HOURLY_CAP} reports an hour on {job['platform']}. It resumes on its own.")
                 return {**self.removal.job(user_id, job_id), "paused_for": "hourly_cap"}
             values = {"profile_url": it.get("profile_url") or "", "handle": it.get("handle") or it["account_id"],
                       "own_followers_url": own_followers_url or it.get("profile_url") or "", "reason": it.get("reason") or "spam"}
-            res = ex.run(page, fill(prog, values))
+            if ex.cockpit:
+                n = queued.index(it) + 1 if it in queued else done + 1
+                ex.cockpit.say(f"{it['action'].replace('_', ' ').capitalize()} @{values['handle']} · {n} of {len(queued)}")
+            try:
+                res = ex.run(page, fill(prog, values))
+            except Stopped:
+                self.db.x("UPDATE removal_jobs SET state='paused', next_at=? WHERE id=?", (sec.iso(), job_id))
+                return {**self.removal.job(user_id, job_id), "stopped": "You stopped the agent. Resume the job whenever you like."}
+            except Skipped:
+                self.removal._finish_item(user_id, job_id, it, "skipped", "You skipped this one", "agent")
+                continue
+            for step_i, label in res.learned.items():
+                if label:
+                    self.learn(user_id, it["platform"], it["action"], step_i, label)
+                    learned.setdefault(it["action"], {})[step_i] = label
             if res.ok:
                 status, err = ("removed" if res.verified else "pending"), None
             else:
@@ -333,6 +392,19 @@ class AgentService:
             ex.pacing.item()
         self.removal._maybe_done(job_id)
         return self.removal.job(user_id, job_id)
+
+    # labels people showed the agent ("the button is called Delete now") ---------------
+    def learn(self, user_id: str, platform: str, action: str, step: int, label: str) -> None:
+        from .. import security as sec
+
+        self.db.x("INSERT OR REPLACE INTO agent_learned(user_id,platform,action,step,label,at) VALUES (?,?,?,?,?,?)",
+                  (user_id, platform, action, step, label[:60], sec.iso()))
+
+    def learned(self, user_id: str, platform: str) -> dict:
+        out: dict = {}
+        for r in self.db.q("SELECT action, step, label FROM agent_learned WHERE user_id=? AND platform=?", (user_id, platform)):
+            out.setdefault(r["action"], {})[r["step"]] = r["label"]
+        return out
 
     def _alert(self, user_id: str, text: str) -> None:
         from .. import security as sec

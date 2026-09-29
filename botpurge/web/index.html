@@ -171,6 +171,16 @@
         <div id="iBest" style="margin-top:12px"></div>
       </div>
       <div class="panel">
+        <h2>Teach the agent</h2>
+        <p class="small muted">Show the done-for-you agent how you do it: a Bot Purge browser window opens, you do the steps once
+          (clicks, typing, keyboard shortcuts, menus, new windows), then press <b>Done</b> in the bar at the top. Your steps are saved
+          and the agent follows them from then on. Passwords and codes are never recorded.</p>
+        <p class="small muted">While the agent works you can watch its cursor, press <b>Take over</b> (or just click or type in its window)
+          to do something yourself, then <b>Resume</b>. If it can't find a button it asks you to click it, and remembers it next time.</p>
+        <div class="row"><button class="primary" id="teachGo">Teach the agent this action</button><span class="small muted" id="teachNote"></span></div>
+        <ol class="steps" id="teachSteps"></ol>
+      </div>
+      <div class="panel">
         <h2>Write or correct the steps</h2>
         <p class="small muted">Platforms change their menus often. Write the steps that work for you; share them and a moderator will review before anyone else sees them. Never include links to login pages or ask for passwords.</p>
         <label class="f">App version (optional)<input id="iVersion" placeholder="e.g. Instagram 352.0 for iOS"></label>
@@ -441,7 +451,7 @@ async function loadInbox() {
   $("sRows").innerHTML = rows.map(r => {
     const who = r.name || (r.handle ? "@" + r.handle : r.sender_id);
     const k = `${esc(r.platform)}|${esc(r.sender_id)}`;
-    return `<tr><td><div class="who">${avatar(who, r.sender_id)}<div><div class="n">${esc(who)}</div><div class="small muted">${esc(r.platform === "email" ? r.sender_id : (PLATFORM_NAMES[r.platform] || r.platform))}</div>
+    return `<tr><td><div class="who">${avatar(who, r.sender_id)}<div><div class="n">${esc(who)}</div><div class="small muted">${esc(r.platform === "email" ? "Email · " + r.sender_id : (SOURCE_NAMES[r.platform] || r.platform))}</div>
         ${r.canary_hit ? `<span class="chip bad">Canary: confirmed AI bot</span>` : ""}</div></div></td>
       <td><span class="pill ${esc(r.label)}">${Math.round(r.score)}</span></td>
       <td><ul class="reasons">${r.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul></td><td class="hide-sm">${r.items}</td>
@@ -691,7 +701,9 @@ async function startJobs() {
     const { modes } = await api(`/api/removals/modes/${p}`);
     const n = rows.length, bots = rows.filter(r => r.label === "likely_bot").length;
     const counts = {}; rows.forEach(r => counts[r.direction] = (counts[r.direction] || 0) + 1);
-    const verbs = Object.entries(counts).map(([d, c]) => `${c} ${d === "friend" ? "unfriend" : d === "follower" ? "remove follower" : "unfollow"}`).join(", ");
+    const plural = (c, one, many) => `${c} ${c === 1 ? one : many}`;
+    const verbs = Object.entries(counts).map(([d, c]) => d === "friend" ? `unfriend ${plural(c, "friend", "friends")}`
+      : d === "follower" ? `remove ${plural(c, "follower", "followers")}` : `unfollow ${plural(c, "account", "accounts")}`).join(", ");
     $("cTitle").textContent = `${n} account${n > 1 ? "s" : ""} on ${PLATFORM_NAMES[p]}`;
     $("cDoRemove").checked = true; $("cDoBlock").checked = false; $("cDoReport").checked = false;
     $("cDoReport").disabled = !bots;
@@ -852,6 +864,21 @@ async function loadAlerts() {
 
 loadHelp(); show();
 if (new URLSearchParams(location.search).get("connected") === "x") toast("X connected and scanned.");
+
+// ---------- teach mode ----------
+$("teachGo").onclick = async () => {
+  const platform = $("iPlatform").value, action = $("iAction").value;
+  const pick = state.rows && state.rows.find(r => r.platform === platform);
+  $("teachNote").textContent = `A window is opening on ${PLATFORM_NAMES[platform]}. Do the steps to ${(ACTION_NAMES[action] || action).toLowerCase()} one account, then press Done in its top bar.`;
+  $("teachGo").disabled = true;
+  try {
+    const r = await api("/api/agent/teach", { method: "POST", headers: auth(), body: { platform, action, account_id: pick ? pick.account_id : null } });
+    $("teachSteps").innerHTML = r.steps.map(x => `<li>${esc(x)}</li>`).join("");
+    $("teachNote").textContent = r.note || (r.saved ? "Saved." : "Nothing saved.");
+    if (r.saved) loadHowto();
+  } catch (e) { paywalled(e); $("teachNote").textContent = ""; }
+  finally { $("teachGo").disabled = false; }
+};
 
 // ---------- installable app ----------
 if ("serviceWorker" in navigator && !navigator.userAgent.includes("pywebview")) navigator.serviceWorker.register("/sw.js").catch(() => {});

@@ -4,6 +4,13 @@
 
 It never asks for a social media password. X connects through its official sign-in; everything else is read from the data export each platform lets you download, or from a phone or mail backup on your own computer.
 
+## Screenshots
+
+| | | | |
+|:-:|:-:|:-:|:-:|
+| <img src="docs/screenshots/01-start.jpg" width="200" alt="Sign up with just an email"><br>**Free scan, no passwords** | <img src="docs/screenshots/02-threats-found.jpg" width="200" alt="Threats found on every network"><br>**Threats found, every network** | <img src="docs/screenshots/03-flagged-accounts.jpg" width="200" alt="Flagged accounts with reasons"><br>**Every flag has reasons** | <img src="docs/screenshots/04-remove-block-report.jpg" width="200" alt="Remove, block or report"><br>**Remove, block or report** |
+| <img src="docs/screenshots/05-step-by-step.jpg" width="200" alt="Step-by-step instructions"><br>**Step by step, or done for you** | <img src="docs/screenshots/06-messages-email-texts.jpg" width="200" alt="Scam messages, emails and texts"><br>**DMs, texts and email** | <img src="docs/screenshots/07-live-guard.jpg" width="200" alt="Live Guard bans giveaway bots"><br>**Live Guard** | <img src="docs/screenshots/08-plans.jpg" width="200" alt="Plans"><br>**Plans: free during beta** |
+
 ## Plans
 
 | | Free scan | **Cleanup**: $20 one-time | **Protect**: $60/month |
@@ -116,6 +123,10 @@ The agent removes, blocks and reports accounts for you in its own browser profil
   - browser pop-ups ("Accept the confirmation")
   - screens that only sometimes appear ("Tap 'Next' if it's shown")
 - **Multi-screen flows:** report and block wizards try each platform's different labels for the same button.
+- **Watch it work, take over any time:** the agent works in a window you can see, with its own cursor gliding to each button. It does not take over your whole computer.
+  - Press **Take over** in its top bar, or just click or type in its window, and it pauses at once. Press **Resume** to hand back.
+- **It asks when it's stuck:** if a platform has moved or renamed a button, the agent asks you to click it. It finishes that step and remembers the new label for every account after.
+- **Teach mode:** on the Removal steps page, press **Teach the agent** and do the process once: clicks, typing, shortcuts, menus, new windows. Your steps are saved as plain-language instructions you can edit, and the agent follows them from then on. Passwords and codes are never recorded.
 - **Pace and limits:** it keeps a human pace and stays under an hourly cap per platform.
 - **Stops on pushback:** at the first "Action blocked", "Try again later" or CAPTCHA, it stops the whole job and tells you.
 - **Consent first:** nothing runs until you accept a plain notice that the platforms forbid automation and can restrict accounts. The exact text you agreed to is stored.
@@ -152,6 +163,10 @@ The **desktop app** is the product people download. It keeps everything on their
   - **Windows:** `WINDOWS_CERT_PFX`, `WINDOWS_CERT_PASSWORD`
 
   A tag must match the app version (`v1.0.0` for 1.0.0).
+
+## Put it online
+
+**www.botpurge.online** runs the website, phone app, store and Purge Console from one small server. The step-by-step guide for IONOS is in [docs/deploy-ionos.md](docs/deploy-ionos.md): a VPS, two DNS records, one install command, and automatic redeploys from GitHub.
 
 ## Run it from source
 

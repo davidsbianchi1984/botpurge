@@ -1,0 +1,19 @@
+# Runs Bot Purge behind Caddy, which gets and renews the HTTPS certificate for botpurge.online by itself.
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - botpurge-data:/data            # database and keys survive updates
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [app]
+volumes:
+  botpurge-data:
+  caddy-data:
