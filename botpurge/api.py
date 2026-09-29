@@ -7,6 +7,7 @@
 Run: ``python -m botpurge`` (or ``uvicorn --factory botpurge.api:create_app``).
 """
 
+import json
 import os
 import threading
 import time
@@ -24,7 +25,7 @@ from . import security as sec
 from .connectors import mail as mailapi
 from .connectors import x as xapi
 from .db import DB
-from .importers import EXPORT_HELP, ImportError_, import_export
+from .importers import EXPORT_HELP, ImportError_, detect_platform, import_export
 from .instructions_store import InstructionStore
 from .models import Platform
 from .agent.runner import AgentService
@@ -34,7 +35,7 @@ from .billing import Billing, BillingError
 from .release import check_for_update, store_url
 from .inbox import AppsService, InboxService
 from .liveguard import ChatMessage, LiveGuardService
-from .messages import import_messages, parse_paste
+from .messages import detect_message_source, import_messages, parse_paste
 from .personal import NotFound, PersonalService
 from .plans import PlanRequired, Plans, catalog
 from .purge.console import PurgeService, Rule
@@ -68,17 +69,67 @@ class Services:
         if not rt:
             raise ValueError(f"{p['name']} isn't connected")
         try:
-            tok = mailapi.refresh(provider, rt, os.environ.get(p["client_env"], ""), os.environ.get(p["secret_env"]), http=self.x_http)
-            if tok.get("refresh_token"):
-                self.save_secret(user_id, f"mail_{provider}_refresh", tok["refresh_token"])
-            raws = mailapi.FETCHERS[provider](tok["access_token"], http=self.x_http)
+            raws = mailapi.FETCHERS[provider](self.mail_token(user_id, provider), http=self.x_http)
         except mailapi.MailError as exc:
             self.db.x("UPDATE mail_links SET last_error=? WHERE user_id=? AND provider=?", (str(exc), user_id, provider))
             raise
-        msgs = [m for m in (parse_email_bytes(r) for r in raws) if m]
+        msgs = []
+        for raw, folder in raws:
+            m = parse_email_bytes(raw)
+            if m:
+                m.headers["x-provider"], m.headers["x-folder"] = provider, folder     # where it lives, for cleanup
+                msgs.append(m)
         result = self.inbox.store(user_id, msgs) if msgs else {"messages": 0}
         self.db.x("UPDATE mail_links SET last_sync=?, last_error=NULL WHERE user_id=? AND provider=?", (sec.iso(), user_id, provider))
         return {"provider": provider, "fetched": len(raws), **result}
+
+    def mail_token(self, user_id: str, provider: str) -> str:
+        p = mailapi.PROVIDERS[provider]
+        rt = self.get_secret(user_id, f"mail_{provider}_refresh")
+        if not rt:
+            raise ValueError(f"{p['name']} isn't connected")
+        link = self.db.one("SELECT can_clean FROM mail_links WHERE user_id=? AND provider=?", (user_id, provider))
+        tok = mailapi.refresh(provider, rt, os.environ.get(p["client_env"], ""), os.environ.get(p["secret_env"]), http=self.x_http,
+                              cleanup=bool(link and link["can_clean"]))
+        if tok.get("refresh_token"):
+            self.save_secret(user_id, f"mail_{provider}_refresh", tok["refresh_token"])
+        return tok["access_token"]
+
+    def clean_mail(self, user_id: str, to: str = "trash", senders: Optional[list] = None) -> dict:
+        """Move the emails of flagged senders (or the ones picked) to Trash or Spam, in every mailbox that allows it."""
+        if to not in ("trash", "spam"):
+            raise ValueError("to must be trash or spam")
+        if senders is None:
+            senders = [r["sender_id"] for r in self.db.q(
+                "SELECT sender_id FROM msg_senders WHERE user_id=? AND platform='email' AND status='active'"
+                " AND label IN ('likely_bot','suspicious')", (user_id,))]
+        want = set(senders)
+        links = {r["provider"]: r for r in self.db.q("SELECT * FROM mail_links WHERE user_id=? AND can_clean=1", (user_id,))}
+        if not links:
+            raise ValueError("Connect a mailbox with cleanup allowed first")
+        ids: dict[str, list] = {}
+        in_inbox, in_spam = set(), set()
+        for r in self.db.q("SELECT sender_id, extra_json FROM msg_items WHERE user_id=? AND kind='email'", (user_id,)):
+            h = (json.loads(r["extra_json"] or "{}") or {}).get("headers", {})
+            if r["sender_id"] not in want or h.get("x-provider") not in links or not h.get("Message-ID"):
+                continue
+            if h.get("x-folder", "Inbox") == "Inbox":
+                ids.setdefault(h["x-provider"], []).append(h["Message-ID"])
+                in_inbox.add(r["sender_id"])
+            else:
+                in_spam.add(r["sender_id"])                       # already out of the way
+        moved, errors = {}, {}
+        for provider, mids in ids.items():
+            try:
+                moved[provider] = mailapi.CLEANERS[provider](self.mail_token(user_id, provider), mids, to, http=self.x_http)
+            except mailapi.MailError as exc:
+                errors[provider] = str(exc)
+        if moved:
+            with self.db.tx() as tx:
+                for sid in want:
+                    tx.execute("UPDATE msg_senders SET status='removed' WHERE user_id=? AND platform='email' AND sender_id=?", (user_id, sid))
+        return {"moved": sum(moved.values()), "by_mailbox": moved, "senders": len(in_inbox) if moved else 0,
+                "already_in_spam": len(in_spam - in_inbox), "to": to, "errors": errors}
 
     def refresh_licenses(self) -> int:
         """Once a day, fetch renewed Protect licenses from the store (desktop copies)."""
@@ -410,11 +461,22 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def import_help():
         return EXPORT_HELP
 
+    @app.post("/api/import/auto")
+    async def import_auto(file: UploadFile = File(...), uid: str = Depends(user)):
+        """Upload the export exactly as downloaded (zip or file); we work out which network it's from."""
+        data = await file.read()
+        platform = detect_platform(file.filename or "", data)
+        if not platform:
+            raise HTTPException(400, "We couldn't tell which network this export is from. Pick the network and upload it again")
+        return {"platform": platform.value, **_import(uid, platform, file.filename, data)}
+
     @app.post("/api/import/{platform}")
     async def import_file(platform: Platform, file: UploadFile = File(...), uid: str = Depends(user)):
-        data = await file.read()
+        return _import(uid, platform, file.filename, await file.read())
+
+    def _import(uid: str, platform: Platform, filename: Optional[str], data: bytes) -> dict:
         try:
-            conns = import_export(platform, file.filename or "upload", data)
+            conns = import_export(platform, filename or "upload", data)
         except ImportError_ as exc:
             raise HTTPException(400, str(exc))
         finally:
@@ -456,11 +518,12 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def mail_links(uid: str = Depends(user)):
         rows = {r["provider"]: dict(r) for r in svc.db.q("SELECT * FROM mail_links WHERE user_id=?", (uid,))}
         return [{"provider": k, "name": p["name"], "available": bool(os.environ.get(p["client_env"])),
-                 "connected": k in rows, "last_sync": rows.get(k, {}).get("last_sync"), "last_error": rows.get(k, {}).get("last_error")}
+                 "connected": k in rows, "last_sync": rows.get(k, {}).get("last_sync"), "last_error": rows.get(k, {}).get("last_error"),
+                 "can_clean": bool(rows.get(k, {}).get("can_clean"))}
                 for k, p in mailapi.PROVIDERS.items()]
 
     @app.post("/api/mail/{provider}/connect")
-    def mail_connect(provider: str, request: Request, uid: str = Depends(user)):
+    def mail_connect(provider: str, request: Request, cleanup: bool = False, uid: str = Depends(user)):
         svc.plans.require(uid, "email")
         p = mailapi.PROVIDERS.get(provider)
         if not p:
@@ -469,10 +532,10 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         if not client_id:
             raise HTTPException(503, f"{p['name']} isn't set up on this copy yet (set {p['client_env']})")
         pkce = xapi.PKCE.new()
-        state = f"{provider}.{pkce.state}"
+        state = f"{provider}.{'clean' if cleanup else 'read'}.{pkce.state}"
         svc.db.x("INSERT INTO oauth_pending VALUES (?,?,?,?)", (state, uid, pkce.verifier, sec.iso()))
         redirect = os.environ.get("MAIL_REDIRECT_URI", str(request.url_for("mail_callback")))
-        return {"authorize_url": mailapi.authorize_url(provider, client_id, redirect, state, pkce.challenge)}
+        return {"authorize_url": mailapi.authorize_url(provider, client_id, redirect, state, pkce.challenge, cleanup=cleanup)}
 
     @app.get("/api/mail/callback", name="mail_callback")
     def mail_callback(request: Request, state: str, code: str = "", error: str = ""):
@@ -485,12 +548,14 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
             return _mail_done(provider, False)
         p = mailapi.PROVIDERS[provider]
         redirect = os.environ.get("MAIL_REDIRECT_URI", str(request.url_for("mail_callback")))
+        cleanup = state.split(".")[1] == "clean"
         tok = mailapi.exchange_code(provider, code, redirect, row["verifier"], os.environ[p["client_env"]],
-                                    os.environ.get(p["secret_env"]), http=svc.x_http)
+                                    os.environ.get(p["secret_env"]), http=svc.x_http, cleanup=cleanup)
         if not tok.get("refresh_token"):
             return _mail_done(provider, False)
         svc.save_secret(row["user_id"], f"mail_{provider}_refresh", tok["refresh_token"])
-        svc.db.x("INSERT OR REPLACE INTO mail_links(user_id,provider,connected_at) VALUES (?,?,?)", (row["user_id"], provider, sec.iso()))
+        svc.db.x("INSERT OR REPLACE INTO mail_links(user_id,provider,connected_at,can_clean) VALUES (?,?,?,?)",
+                 (row["user_id"], provider, sec.iso(), 1 if cleanup else 0))
         try:
             svc.sync_mail(row["user_id"], provider)
         except Exception:
@@ -512,6 +577,18 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         if provider not in mailapi.PROVIDERS:
             raise HTTPException(404, "unknown mail provider")
         return svc.sync_mail(uid, provider)
+
+    class MailCleanIn(BaseModel):
+        to: str = "trash"                          # trash | spam; never deleted for good
+        senders: Optional[list[str]] = None        # default: every flagged email sender
+
+    @app.post("/api/mail/clean")
+    def mail_clean(body: MailCleanIn, uid: str = Depends(user)):
+        svc.plans.require(uid, "email")
+        try:
+            return svc.clean_mail(uid, body.to, body.senders)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     @app.delete("/api/mail/{provider}")
     def mail_disconnect(provider: str, uid: str = Depends(user)):
@@ -673,13 +750,17 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     async def inbox_import(source: str, file: UploadFile = File(...), uid: str = Depends(user)):
         svc.plans.require(uid, "messages")
         data = await file.read()
+        if source == "auto":
+            source = detect_message_source(file.filename or "", data) or ""
+            if not source:
+                raise HTTPException(400, "We couldn't tell what kind of export this is. Pick the type and upload it again")
         try:
             msgs = import_messages(source, file.filename or "upload", data)
         except ImportError_ as exc:
             raise HTTPException(400, str(exc))
         finally:
             del data
-        return {"imported": len(msgs), **svc.inbox.store(uid, msgs)}
+        return {"imported": len(msgs), "source": source, **svc.inbox.store(uid, msgs)}
 
     class PasteIn(BaseModel):
         platform: str = "tiktok"
@@ -795,7 +876,10 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     @app.post("/api/liveguard/sessions")
     def liveguard_start(body: LiveStartIn, uid: str = Depends(user)):
         svc.plans.require(uid, "liveguard")
-        return svc.liveguard.start(uid, body.platform, body.channel, body.policy)
+        from .agent.chat import prefs_for
+
+        defaults = prefs_for(svc, uid).get("live") or {}           # what the person told their agent
+        return svc.liveguard.start(uid, body.platform, body.channel, {**defaults, **body.policy})
 
     @app.get("/api/liveguard/sessions")
     def liveguard_sessions(uid: str = Depends(user)):
@@ -869,7 +953,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
                 cockpit = Cockpit(ctx).install()
                 page = ctx.pages[0] if ctx.pages else ctx.new_page()
                 page.goto(body.url, wait_until="domcontentloaded")
-                watch(svc.liveguard, uid, sid, page, x["platform"], cockpit=cockpit,
+                watch(svc.liveguard, uid, sid, page, x["platform"], cockpit=cockpit, custom=_own_steps(uid, x["platform"], LIVE_OWN),
                       executor=Executor(Pacing(0.3, 0.8, 0, 0), timeout_ms=4000, cockpit=cockpit, ask_help=False))
             except Stopped:
                 svc.liveguard.stop(uid, sid)
@@ -895,6 +979,17 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def liveguard_undo(sid: str, event_id: int, uid: str = Depends(user)):
         return svc.liveguard.undo(uid, sid, event_id)
 
+    LIVE_OWN = {"ban": "live_ban", "timeout": "live_timeout", "delete": "live_delete"}
+
+    def _own_steps(uid: str, platform: str, actions: dict) -> dict:
+        """The person's own written or taught steps, which win over the built-in ones."""
+        out = {}
+        for key, action in actions.items():
+            mine = svc.instructions.best(platform, "web", action, uid)
+            if mine.get("author_id") == uid and mine.get("steps"):
+                out[key] = mine["steps"]
+        return out
+
     # Done-for-you agent (Protect; runs in the desktop app's own browser)
     @app.get("/api/agent/consent/{platform}")
     def agent_consent_get(platform: str, uid: str = Depends(user)):
@@ -910,8 +1005,41 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         svc.agent.withdraw_consent(uid, platform)
         return {"platform": platform, "consented": False}
 
-    LOGIN_URLS = {"instagram": "https://www.instagram.com/accounts/login/", "tiktok": "https://www.tiktok.com/login",
-                  "facebook": "https://www.facebook.com/login", "linkedin": "https://www.linkedin.com/login", "x": "https://x.com/login"}
+    from .agent import signin as agent_signin
+    LOGIN_URLS = agent_signin.LOGIN_URLS
+
+    def _saved_signin(uid: str, platform: str) -> Optional[dict]:
+        return agent_signin.unpack(svc.get_secret(uid, agent_signin.secret_name(platform)))
+
+    # Optional: save a sign-in so the agent can log in by itself (desktop app only; sealed on this computer)
+    @app.get("/api/agent/signins")
+    def agent_signins(uid: str = Depends(user)):
+        out = []
+        for p in LOGIN_URLS:
+            c = _saved_signin(uid, p)
+            out.append({"platform": p, "saved": bool(c), "username": agent_signin.masked(c["username"]) if c else None})
+        return {"available": os.environ.get("BOTPURGE_DESKTOP") == "1", "signins": out}
+
+    class SigninIn(BaseModel):
+        username: str
+        password: str
+
+    @app.put("/api/agent/signins/{platform}")
+    def agent_signin_save(platform: str, body: SigninIn, uid: str = Depends(user)):
+        if platform not in LOGIN_URLS:
+            raise HTTPException(400, "unknown platform")
+        if os.environ.get("BOTPURGE_DESKTOP") != "1":
+            raise HTTPException(403, "Saved sign-ins stay on your own computer, so they're only in the Bot Purge desktop app")
+        svc.plans.require(uid, "agent")
+        if not body.username.strip() or not body.password:
+            raise HTTPException(400, "Enter both the username and the password")
+        svc.save_secret(uid, agent_signin.secret_name(platform), agent_signin.pack(body.username.strip(), body.password))
+        return {"platform": platform, "saved": True, "username": agent_signin.masked(body.username.strip())}
+
+    @app.delete("/api/agent/signins/{platform}")
+    def agent_signin_forget(platform: str, uid: str = Depends(user)):
+        svc.db.x("DELETE FROM secrets WHERE user_id=? AND name=?", (uid, agent_signin.secret_name(platform)))
+        return {"platform": platform, "saved": False}
 
     def _agent_browser():
         try:
@@ -939,26 +1067,36 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
             raise HTTPException(400, "unknown platform")
         pw, ctx = _agent_browser()
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        creds = _saved_signin(uid, platform)
+        if creds:
+            from .agent.cockpit import Cockpit
+
+            ok = agent_signin.sign_in(page, platform, creds, Cockpit(ctx).install())
+            return {"opened": LOGIN_URLS[platform], "signed_in": ok,
+                    "note": "Signed in with your saved sign-in." if ok else "Couldn't finish signing in. Finish it in the window, then close it."}
         page.goto(LOGIN_URLS[platform])
         return {"opened": LOGIN_URLS[platform], "note": "Sign in in the window that opened, then close it."}
 
     @app.post("/api/removals/{job_id}/agent/run")
     def agent_run(job_id: str, uid: str = Depends(user)):
         svc.plans.require(uid, "agent")
-        custom = {}
         job = svc.removal.job(uid, job_id)
-        for action in {i["action"] for i in job["items"]}:
-            mine = svc.instructions.best(job["platform"], "web", action, uid)
-            if mine.get("author_id") == uid:
-                custom[action] = mine["steps"]  # the customer's own written steps win
+        if not svc.agent.has_consent(uid, job["platform"]):          # the notice comes before anything opens or signs in
+            raise PermissionError(f"Consent for the agent on {job['platform']} is needed first")
+        custom = _own_steps(uid, job["platform"], {a: a for a in {i["action"] for i in job["items"]}})  # the customer's own steps win
+        from .agent.chat import PACES, prefs_for
+
+        prefs = prefs_for(svc, uid)
         pw, ctx = _agent_browser()
         try:
             from .agent.cockpit import Cockpit
-            from .agent.runner import Executor
+            from .agent.runner import Executor, Pacing
 
             cockpit = Cockpit(ctx).install()          # visible cursor; the person can take over any time
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            return svc.agent.run_job(uid, job_id, page, executor=Executor(cockpit=cockpit), custom_steps=custom)
+            agent_signin.ensure_signed_in(page, job["platform"], _saved_signin(uid, job["platform"]), cockpit)
+            return svc.agent.run_job(uid, job_id, page, executor=Executor(Pacing(*PACES[prefs["pace"]]), cockpit=cockpit),
+                                     custom_steps=custom, max_items=prefs["max_per_run"])
         finally:
             ctx.close()
             pw.stop()
@@ -967,39 +1105,74 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         platform: str
         action: str
         account_id: Optional[str] = None        # a flagged account to demonstrate on
+        start_url: Optional[str] = None         # live moderation: the person's live
+        example_name: Optional[str] = None      # live moderation: the chatter they'll act on
 
     @app.post("/api/agent/teach")
     def agent_teach(body: TeachIn, uid: str = Depends(user)):
         """Teach mode: the person does a process once in the agent's window; it's saved as their own steps."""
+        from .agent.chat import teachable
         from .agent.cockpit import Cockpit, Stopped, steps_from_recording
-        from .instructions import PLATFORM_ACTIONS
 
         svc.plans.require(uid, "agent")
-        if body.action not in PLATFORM_ACTIONS.get(body.platform, ()):
+        if body.action not in teachable(body.platform):
             raise HTTPException(400, f"{body.platform} doesn't support {body.action}")
+        live = body.action.startswith("live_")
+        if live:
+            host = WATCH_HOSTS.get(body.platform, "")
+            if not body.start_url or not body.start_url.lower().startswith("https://") or host not in body.start_url.lower():
+                raise HTTPException(400, f"Paste the link to your live on {host}")
+            if not (body.example_name or "").strip():
+                raise HTTPException(400, "Type the name of the chatter you'll show it on")
         f = None
         if body.account_id:
             f = svc.db.one("SELECT handle, profile_url FROM flags WHERE user_id=? AND platform=? AND account_id=?",
                            (uid, body.platform, body.account_id))
-        home = {"instagram": "https://www.instagram.com/", "tiktok": "https://www.tiktok.com/", "facebook": "https://www.facebook.com/",
-                "linkedin": "https://www.linkedin.com/", "x": "https://x.com/home"}[body.platform]
+        home = agent_signin.HOME_URLS[body.platform]
         pw, ctx = _agent_browser()
         try:
             cockpit = Cockpit(ctx).install()
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            agent_signin.ensure_signed_in(page, body.platform, _saved_signin(uid, body.platform), cockpit)
             try:
-                raw = cockpit.record(page, start_url=(f and f["profile_url"]) or home)
+                raw = cockpit.record(page, start_url=body.start_url if live else ((f and f["profile_url"]) or home))
             except Stopped:
                 return {"saved": False, "steps": []}
         finally:
             ctx.close()
             pw.stop()
-        lines = steps_from_recording(raw, {"handle": f and f["handle"]})
+        lines = steps_from_recording(raw, {"author_name": body.example_name.strip()} if live else {"handle": f and f["handle"]})
         if len(lines) < 2:
             return {"saved": False, "steps": lines, "note": "Nothing was recorded. Try again and click through the steps."}
         saved = svc.instructions.submit(uid, body.platform, "web", body.action, lines)
         return {"saved": True, "steps": lines, "id": saved["id"],
                 "note": "Saved as your own steps: the agent follows them for this action from now on. Edit them any time."}
+
+    # Talk to your agent: fine-tune its settings, directions and objectives in plain words
+    class ChatIn(BaseModel):
+        text: str = Field(min_length=1, max_length=2000)
+        platform: Optional[str] = None                # what the person is teaching, when they came from a failed step
+        action: Optional[str] = None
+
+    @app.post("/api/agent/chat")
+    def agent_chat(body: ChatIn, uid: str = Depends(user)):
+        from .agent.chat import converse
+
+        return converse(svc, uid, body.text, {"platform": body.platform, "action": body.action}, http=svc.x_http or httpx.Client())
+
+    @app.get("/api/agent/chat")
+    def agent_chat_history(uid: str = Depends(user)):
+        from .agent.chat import prefs_for, teachable
+
+        rows = svc.db.q("SELECT role, text, at FROM agent_chat WHERE user_id=? ORDER BY rowid DESC LIMIT 40", (uid,))
+        return {"messages": [dict(r) for r in rows][::-1], "prefs": prefs_for(svc, uid),
+                "teachable": {p: list(teachable(p)) for p in ("tiktok", "instagram", "facebook", "linkedin", "x", "kick")},
+                "engine": "claude" if os.environ.get("ANTHROPIC_API_KEY") else "built-in"}
+
+    @app.delete("/api/agent/chat")
+    def agent_chat_clear(uid: str = Depends(user)):
+        svc.db.x("DELETE FROM agent_chat WHERE user_id=?", (uid,))
+        return {"cleared": True}
 
     # Desktop app only: read texts straight from an iPhone backup on this computer
     @app.get("/api/local/iphone-backups")

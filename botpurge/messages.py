@@ -544,7 +544,7 @@ def _email_to_message(msg) -> Optional[Message]:
             at = at.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
         at = None
-    headers = {k: str(msg.get(k, "")) for k in ("From", "Reply-To", "Authentication-Results", "Return-Path", "List-Unsubscribe")}
+    headers = {k: str(msg.get(k, "")) for k in ("From", "Reply-To", "Authentication-Results", "Return-Path", "List-Unsubscribe", "Message-ID")}
     headers["x-attachments"] = "|".join(attachments[:50])
     headers["x-html-smuggling"] = "1" if any(h for h in rules.attachment_findings([], "".join(html_raw)) if h.code == "html_smuggling") else ""
     return Message(kind="email", platform="email", sender_id=addr.lower(), sender_name=name, sender_handle=addr.lower(),
@@ -678,6 +678,43 @@ def parse_iphone_sms_db(data: bytes) -> list[Message]:
                                at=datetime.fromtimestamp(secs, timezone.utc) if date else None))
         con.close()
     return out
+
+
+def detect_message_source(filename: str, data: bytes) -> Optional[str]:
+    """Which kind of message export this is: tiktok, instagram, facebook, x, email, sms or csv."""
+    name = (filename or "").lower()
+    if data[:2] == b"PK":
+        try:
+            inside = "\n".join(i.filename.lower() for i in zipfile.ZipFile(io.BytesIO(data)).infolist() if not i.is_dir())
+        except zipfile.BadZipFile:
+            return None
+        if re.search(r"\.(mbox|eml)$", inside, re.M):
+            return "email"
+        if re.search(r"(sms[^/]*\.xml|sms\.db)$", inside, re.M):
+            return "sms"
+        if re.search(r"user_data(_tiktok)?\.json$", inside, re.M):
+            return "tiktok"
+        if re.search(r"direct-messages?(-group)?\.js$", inside, re.M):
+            return "x"
+        if re.search(r"message_\d+\.json$", inside, re.M):
+            return "instagram" if "instagram" in inside or "instagram" in name else "facebook"
+        return None
+    if data[:16].startswith(b"SQLite format 3"):
+        return "sms"
+    head = data[:4000].decode("utf-8", "ignore")
+    if name.endswith((".mbox", ".eml")) or head.startswith("From ") or re.search(r"^(Received|Return-Path|Message-ID):", head, re.M | re.I):
+        return "email"
+    if "<smses" in head or "<allsms" in head:
+        return "sms"
+    if "window.YTD.direct_message" in head:
+        return "x"
+    if re.search(r'"(Direct Messages|ChatHistory|Chat History)"', head):
+        return "tiktok"
+    if '"participants"' in head and '"messages"' in head:
+        return "instagram" if "instagram" in name else "facebook"
+    if name.endswith(".csv"):
+        return "csv"
+    return None
 
 
 def import_messages(source: str, filename: str, data: bytes) -> list[Message]:

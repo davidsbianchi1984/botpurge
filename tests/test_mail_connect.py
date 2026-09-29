@@ -1,5 +1,6 @@
-"""Live inbox connections (Gmail, Outlook): read-only OAuth, fetched mail goes through the email scanner."""
+"""Live inbox connections (Gmail, Outlook, Yahoo Mail): read-only OAuth, fetched mail goes through the email scanner."""
 import base64
+import json
 from email.message import EmailMessage
 from urllib.parse import parse_qs, urlparse
 
@@ -20,7 +21,7 @@ def scam_email(i=0):
 
 def fake_provider(req: httpx.Request):
     u = req.url
-    if u.host in ("oauth2.googleapis.com", "login.microsoftonline.com"):
+    if u.host in ("oauth2.googleapis.com", "login.microsoftonline.com") or u.path == "/oauth2/get_token":
         form = parse_qs(req.content.decode())
         assert form["client_id"] == ["cid"] and form["grant_type"][0] in ("authorization_code", "refresh_token")
         if form["grant_type"] == ["authorization_code"]:
@@ -28,20 +29,73 @@ def fake_provider(req: httpx.Request):
         return httpx.Response(200, json={"access_token": "at", "refresh_token": "rt2"})
     assert req.headers["authorization"] == "Bearer at"
     if u.host == "gmail.googleapis.com":
+        if req.method == "POST":
+            MOVES.append(("gmail", u.path.rsplit("/", 2)[-2], u.path.rsplit("/", 1)[-1]))
+            return httpx.Response(200, json={})
         if u.path.endswith("/messages"):
+            q = u.params.get("q", "")
+            if q.startswith("rfc822msgid:"):
+                return httpx.Response(200, json={"messages": [{"id": "g" + q.split("scam")[1].split("@")[0]}]})
+            if u.params.get("labelIds") == "SPAM":
+                return httpx.Response(200, json={"messages": [{"id": "g9"}]})
             return httpx.Response(200, json={"messages": [{"id": "g1"}, {"id": "g2"}]})
         raw = base64.urlsafe_b64encode(scam_email(int(u.path[-1]))).decode().rstrip("=")
         return httpx.Response(200, json={"raw": raw})
     if u.host == "graph.microsoft.com":
+        if req.method == "POST":
+            MOVES.append(("outlook", u.path.split("/")[-2], json.loads(req.content)["destinationId"]))
+            return httpx.Response(200, json={})
         if "mailFolders/inbox/messages" in u.path:
             return httpx.Response(200, json={"value": [{"id": "o1"}]})
+        if "mailFolders/junkemail/messages" in u.path:
+            return httpx.Response(200, json={"value": []})
+        if u.path.endswith("/messages"):
+            return httpx.Response(200, json={"value": [{"id": "o1"}]})
         return httpx.Response(200, content=scam_email(7))
+    if u.host == "api.login.yahoo.com" and u.path.endswith("/userinfo"):
+        return httpx.Response(200, json={"email": "me@yahoo.com"})
     return httpx.Response(404)
+
+
+MOVES: list = []
+
+
+class FakeYahooImap:
+    """Yahoo's IMAP server: XOAUTH2 sign-in, an inbox with three recent messages and an empty Spam ("Bulk") folder."""
+    def __init__(self, *a, **k):
+        self.readonly = None
+        self.box = None
+
+    def uid(self, cmd, *args):
+        if cmd == "SEARCH":
+            return "OK", [b"1" + args[-1].split("scam")[1].split("@")[0].encode()]
+        assert cmd == "MOVE" and not self.readonly
+        MOVES.append(("yahoo", args[0], args[1]))
+        return "OK", [b""]
+
+    def authenticate(self, mech, cb):
+        assert mech == "XOAUTH2" and cb(b"") == b"user=me@yahoo.com\x01auth=Bearer at\x01\x01"
+
+    def select(self, box, readonly=False):
+        self.readonly, self.box = readonly, box
+        return "OK", [b"3"]
+
+    def search(self, charset, *crit):
+        assert crit[0] == "SINCE"
+        return "OK", [b"1 2 3" if self.box == "INBOX" else b""]
+
+    def fetch(self, mid, what):
+        assert self.readonly and "PEEK" in what          # never marks mail read
+        return "OK", [(mid + b" (BODY[] {10}", scam_email(int(mid))), b")"]
+
+    def logout(self):
+        pass
 
 
 @pytest.fixture
 def c(tmp_path, monkeypatch):
-    for k in ("GOOGLE_CLIENT_ID", "MS_CLIENT_ID"):
+    monkeypatch.setattr("botpurge.connectors.mail.imaplib.IMAP4_SSL", FakeYahooImap)
+    for k in ("GOOGLE_CLIENT_ID", "MS_CLIENT_ID", "YAHOO_CLIENT_ID"):
         monkeypatch.setenv(k, "cid")
     app = create_app(str(tmp_path / "m.sqlite3"), worker=False, x_http=httpx.Client(transport=httpx.MockTransport(fake_provider)))
     client = TestClient(app)
@@ -49,10 +103,10 @@ def c(tmp_path, monkeypatch):
     return client, {"Authorization": f"Bearer {u['token']}"}, app
 
 
-@pytest.mark.parametrize("provider,scope,expect", [("gmail", "gmail.readonly", 2), ("outlook", "Mail.Read", 1)])
+@pytest.mark.parametrize("provider,scope,expect", [("gmail", "gmail.readonly", 3), ("outlook", "Mail.Read", 1), ("yahoo", "mail-r", 3)])
 def test_connect_read_only_and_scan(c, provider, scope, expect):
     client, h, app = c
-    assert {m["provider"]: m["available"] for m in client.get("/api/mail", headers=h).json()} == {"gmail": True, "outlook": True}
+    assert {m["provider"]: m["available"] for m in client.get("/api/mail", headers=h).json()} == {"gmail": True, "outlook": True, "yahoo": True}
     url = client.post(f"/api/mail/{provider}/connect", headers=h).json()["authorize_url"]
     q = parse_qs(urlparse(url).query)
     assert scope in q["scope"][0] and q["code_challenge_method"] == ["S256"]
@@ -87,3 +141,37 @@ def test_not_configured_and_paid_feature(tmp_path, monkeypatch):
     monkeypatch.setenv("BOTPURGE_BETA", "0")
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
     assert client.post("/api/mail/gmail/connect", headers=h).status_code == 402
+
+
+@pytest.mark.parametrize("provider,scope,dest", [("gmail", "gmail.modify", "trash"), ("outlook", "Mail.ReadWrite", "deleteditems"),
+                                                 ("yahoo", "mail-w", "Trash")])
+def test_cleanup_is_opt_in_and_moves_flagged_mail_to_trash(c, provider, scope, dest):
+    client, h, app = c
+    MOVES.clear()
+    # Read-only first: cleanup isn't possible.
+    url = client.post(f"/api/mail/{provider}/connect", headers=h).json()["authorize_url"]
+    client.get(f"/api/mail/callback?state={parse_qs(urlparse(url).query)['state'][0]}&code=abc")
+    assert not {m["provider"]: m for m in client.get("/api/mail", headers=h).json()}[provider]["can_clean"]
+    assert client.post("/api/mail/clean", json={}, headers=h).status_code == 400 and not MOVES
+    # Reconnect with cleanup allowed: the broader permission is asked for, and flagged mail moves to Trash.
+    url = client.post(f"/api/mail/{provider}/connect?cleanup=true", headers=h).json()["authorize_url"]
+    q = parse_qs(urlparse(url).query)
+    assert scope in q["scope"][0]
+    client.get(f"/api/mail/callback?state={q['state'][0]}&code=abc")
+    assert {m["provider"]: m for m in client.get("/api/mail", headers=h).json()}[provider]["can_clean"]
+    r = client.post("/api/mail/clean", json={"to": "trash"}, headers=h).json()
+    assert r["moved"] >= 1 and r["senders"] == 1 and not r["errors"]
+    assert MOVES and all(m[0] == provider for m in MOVES) and any(dest in m for m in MOVES)
+    senders = client.get("/api/inbox/senders?tab=removed", headers=h).json()
+    assert [s_["sender_id"] for s_ in senders] == ["renewals.team88@gmail.com"]
+
+
+def test_cleanup_only_the_selected_senders(c):
+    client, h, app = c
+    MOVES.clear()
+    url = client.post("/api/mail/gmail/connect?cleanup=true", headers=h).json()["authorize_url"]
+    client.get(f"/api/mail/callback?state={parse_qs(urlparse(url).query)['state'][0]}&code=abc")
+    r = client.post("/api/mail/clean", json={"to": "trash", "senders": ["nobody@example.com"]}, headers=h).json()
+    assert r["moved"] == 0 and r["senders"] == 0 and not MOVES          # a sender that isn't in the mailbox moves nothing
+    r = client.post("/api/mail/clean", json={"to": "trash", "senders": ["renewals.team88@gmail.com"]}, headers=h).json()
+    assert r["moved"] >= 1 and r["senders"] == 1

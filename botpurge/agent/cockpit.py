@@ -253,6 +253,18 @@ class Cockpit:
             except Exception:
                 pass
 
+    def hand_over(self, page, msg: str) -> None:
+        """Give the window to the person for something only they should do (a sign-in code), until Resume."""
+        self.state = "paused"
+        self._show("paused", msg)
+        deadline = time.time() + self.help_timeout
+        while self.state == "paused" and time.time() < deadline:
+            self._wait(page)
+        if self.state == "stopped":
+            raise Stopped()
+        self.state = "run"
+        self._show("run", self.msg)
+
     def ask_help(self, page, step: dict) -> Optional[dict]:
         """Ask the person to click the thing the agent couldn't find; returns what they clicked."""
         what = step.get("text") or step.get("option") or step.get("name") or " / ".join(step.get("any", [])[:3]) or "the next button"
@@ -308,6 +320,7 @@ def steps_from_recording(raw: list[dict], values: Optional[dict] = None) -> list
     """
     values = values or {}
     handle = (values.get("handle") or "").lstrip("@").lower()
+    chatter = (values.get("author_name") or "").lstrip("@").lower()     # live moderation: the chatter they acted on
     lines: list[str] = []
     last_type_key = None
     typed: set = set()
@@ -336,6 +349,8 @@ def steps_from_recording(raw: list[dict], values: Optional[dict] = None) -> list
         last_type_key = None
         if op == "click":
             t = (s.get("text") or "").strip()
+            if chatter and t.lstrip("@").lower() == chatter:
+                t = "{author_name}"
             if t:
                 if lines and lines[-1] == f"Click {_q(t)}.":
                     continue                          # a double click counts once
@@ -357,7 +372,7 @@ def steps_from_recording(raw: list[dict], values: Optional[dict] = None) -> list
         if out and ln == out[-1] and ln.startswith("Type "):
             continue
         out.append(ln)
-    return ["Open their profile."] + out[:19]
+    return out[:20] if chatter else ["Open their profile."] + out[:19]
 
 
 def learned_program(program: list[dict], learned: dict[int, str]) -> list[dict]:

@@ -109,3 +109,18 @@ def test_agent_learns_an_unfamiliar_chat_layout(svc, page):
     assert stats["read"] >= 3
     flagged = [e["author_id"] for e in svc.liveguard.session(uid, sid)["events"] if e["action"] != "none"]
     assert "free_gift_99" in flagged and "gamer_joe" not in flagged
+
+
+@browser
+def test_streamers_own_steps_win_over_the_built_in_ones(svc, page):
+    """TikTok moved "Block" into a "Manage" menu for this streamer; they taught it once, and the agent follows."""
+    uid, sid = _session(svc)
+    _live(page)
+    page.evaluate("""() => { const m = document.getElementById('menu');
+        m.innerHTML = '<button onclick="document.getElementById(\\'sub\\').hidden=false">Manage</button>' +
+                      '<div id="sub" hidden><button onclick="window.blocked.push(window.who)">Remove from chat</button></div>'; }""")
+    cp = Cockpit(page.context).install()
+    ex = Executor(Pacing(0, 0, 0, 0, sleep=lambda s: None), timeout_ms=1500, cockpit=cp, ask_help=False)
+    own = {"ban": ['Click "{author_name}".', 'Click "Manage".', 'Click "Remove from chat".']}
+    stats = watch(svc.liveguard, uid, sid, page, "tiktok", executor=ex, cockpit=cp, poll=0.3, max_seconds=5, custom=own)
+    assert "free_gift_99" in page.evaluate("window.blocked") and stats["removed"] >= 1

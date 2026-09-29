@@ -379,6 +379,25 @@ BAIT_NAME = R(r"(on telegram|via telegram|telegram me|tlgrm|on nicegram|on insta
 PINNED = R(r"pinned\s*by")
 
 
+_VOWELS = set("aeiou")
+_REAL_NO_VOWELS = {"rhythm", "rhythms", "crypt", "crypts", "lynx", "myths", "glyph", "glyphs", "nymph", "nymphs", "psych", "synth",
+                   "synths", "gypsy", "tryst", "flyby", "shyly", "slyly", "dryly", "lymph", "pygmy", "sylph", "xysts"}
+
+
+def keyboard_mash(name: str) -> bool:
+    """Names made of random letters ("yznnkdcp", "ynvpxs", "cbeanjhgccf"): no real name reads like that."""
+    for part in re.split(r"[\s._\-]+", (name or "").lower().lstrip("@")):
+        letters = re.sub(r"[^a-z]", "", part)
+        if len(letters) < 5 or len(letters) != len(part):
+            continue
+        vowels = sum(ch in _VOWELS for ch in letters)
+        if vowels == 0 and letters not in _REAL_NO_VOWELS:         # ynvpxs
+            return True
+        if len(letters) >= 8 and re.search(r"[bcdfghjklmnpqrstvwxz]{5,}", letters):   # yznnkdcp, cbeanjhgccf
+            return True
+    return False
+
+
 def evaluate_username(name: str) -> list[Hit]:
     c = normalize(name or "")
     squashed = re.sub(r"[\s_.\-*|]+", " ", c.leet)

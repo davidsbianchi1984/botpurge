@@ -35,7 +35,7 @@
       <div class="panel">
         <div class="chip good">For you and your family</div>
         <h2 style="margin-top:8px">Clean up your accounts</h2>
-        <p class="small muted">Free scan. We never ask for your social media passwords: connect X with its official sign-in, or upload the data export each platform lets you download.</p>
+        <p class="small muted">Free scan. You never need to give us your social media passwords: connect X with its official sign-in, or upload the data export each platform lets you download.</p>
         <div class="row" style="margin:12px 0">
           <input id="email" type="email" placeholder="you@example.com" style="flex:1" autocomplete="email">
           <button class="primary" id="signup">Start free scan</button>
@@ -76,6 +76,7 @@
       <button data-tab="live">Live Guard</button>
       <button data-tab="queue">Removal queue</button>
       <button data-tab="howto">Removal steps</button>
+      <button data-tab="agent">Your agent</button>
       <button data-tab="log">History &amp; undo</button>
       <button data-tab="alerts">Alerts <span id="alertCount" class="chip bad hidden"></span></button>
       <button data-tab="plans">Plans</button>
@@ -98,7 +99,7 @@
         <h3>Or upload a data export</h3>
         <div class="row">
           <select id="impPlatform">
-            <option value="instagram">Instagram</option><option value="facebook">Facebook</option>
+            <option value="auto">Detect automatically</option><option value="instagram">Instagram</option><option value="facebook">Facebook</option>
             <option value="tiktok">TikTok</option><option value="linkedin">LinkedIn</option><option value="x">X (archive)</option>
           </select>
           <input type="file" id="impFile" accept=".zip,.json,.csv,.js,.txt">
@@ -189,6 +190,56 @@
       </div>
     </div>
 
+    <!-- Your agent: extra choices for how the done-for-you agent signs in, learns and works -->
+    <div data-view="agent" class="hidden">
+      <div class="panel">
+        <h2>Talk to your agent</h2>
+        <p class="small muted">Tell it how you want it to work, in your own words. It changes only your own settings and says exactly what changed.</p>
+        <div id="acLog" class="chatlog"></div>
+        <div id="acCtx" class="small muted hidden"></div>
+        <div class="row" style="margin-top:8px"><textarea id="acText" rows="2" style="flex:1" placeholder="e.g. go slower, only 20 at a time, never remove @jenny_r"></textarea>
+          <button class="primary" id="acSend">Send</button></div>
+        <div class="row small" id="acIdeas" style="margin-top:6px"></div>
+        <p class="small muted" id="acPrefs"></p>
+      </div>
+      <div class="panel">
+        <h2>When the agent doesn't know how</h2>
+        <p class="small muted">The agent knows the usual steps on each platform. When a platform works differently for you, or changes its menus, teach it one of three ways. It works for removing, blocking, reporting, unfriending and moderating your lives.</p>
+        <div class="row">
+          <select id="tPlat"></select>
+          <select id="tAct"></select>
+        </div>
+        <div class="row hidden" id="tLive" style="margin-top:8px">
+          <input id="tLiveUrl" placeholder="Link to your live" style="flex:2">
+          <input id="tChatter" placeholder="Name of a chatter to show it on" style="flex:1">
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="tWrite">✍️ Write the steps</button>
+          <button id="tShow">🖱️ Show the agent</button>
+          <button id="tTalk">💬 Talk it through</button>
+        </div>
+        <div id="tWriteBox" class="hidden" style="margin-top:10px">
+          <label class="f">Steps, one per line. Put button names in quotes.<textarea id="tSteps" rows="5" placeholder='Click "More".&#10;Click "Block".&#10;Click "Block" if asked again.'></textarea></label>
+          <div class="row" style="margin-top:6px"><span style="flex:1"></span><button class="primary" id="tSave">Save my steps</button></div>
+        </div>
+        <p class="small muted" id="tNote">Show the agent: a Bot Purge window opens and you share your screen and cursor with the agent. Do it once while it watches, then press Done in its top bar. Passwords and codes are never recorded.</p>
+        <ol class="steps" id="tResult"></ol>
+      </div>
+      <div class="panel">
+        <h2>How the agent signs in</h2>
+        <p class="small muted"><b>Sign in yourself (recommended):</b> the agent opens the platform in its own window and you sign in there. Nothing is saved by Bot Purge.</p>
+        <p class="small muted"><b>Or save your sign-in:</b> the agent signs in by itself. Only in the desktop app: it stays sealed on this computer and is typed only into the platform's own login page. If the platform asks for a code or a puzzle, the agent hands the window to you.</p>
+        <div id="sList"></div>
+        <div class="row" id="sForm" style="margin-top:8px">
+          <select id="sPlat"></select>
+          <input id="sUser" placeholder="Username, email or phone" autocomplete="off" style="flex:1">
+          <input id="sPass" type="password" placeholder="Password" autocomplete="new-password" style="flex:1">
+          <button class="primary" id="sSave">Save sign-in</button>
+        </div>
+        <p class="small muted hidden" id="sOnlyDesktop">Saving a sign-in is only in the Bot Purge desktop app, so your password never leaves your own computer.</p>
+      </div>
+    </div>
+
     <!-- Log -->
     <div data-view="log" class="hidden">
       <div class="panel">
@@ -205,18 +256,19 @@
         <h2>Scan your messages, comments and email</h2>
         <p class="small muted">Bots and scammers show themselves by how they write and act: emoji codes like [tearsofjoy], pushing you to another app, the same line over and over, links, and scam pressure in email. We judge behaviour only, never anyone's opinions.</p>
         <div class="row">
-          <select id="mSource"><option value="tiktok">TikTok DMs (data export)</option><option value="instagram">Instagram DMs (data export)</option>
+          <select id="mSource"><option value="auto">Detect automatically</option><option value="tiktok">TikTok DMs (data export)</option><option value="instagram">Instagram DMs (data export)</option>
             <option value="facebook">Facebook Messenger (data export)</option><option value="x">X DMs (archive)</option>
             <option value="email">Email (.mbox or .eml)</option><option value="sms">Text messages (Android backup .xml or iPhone sms.db)</option><option value="csv">Comments / chat (CSV)</option></select>
           <input type="file" id="mFile" accept=".zip,.json,.js,.mbox,.eml,.csv">
           <button class="primary" id="mImport">Scan</button>
         </div>
-        <p class="small muted">Gmail: takeout.google.com → Mail → .mbox. Outlook/Apple Mail: drag messages out as .eml, or export a mailbox.
+        <p class="small muted">Gmail: takeout.google.com → Mail → .mbox. Outlook, Yahoo Mail, Apple Mail: drag messages out as .eml, or export a mailbox.
           Android texts: the free "SMS Backup &amp; Restore" app → back up → upload the .xml. iPhone texts: back up to your computer (Finder/iTunes), then upload <code>sms.db</code> (the desktop app finds it for you).</p>
         <div class="row"><button id="iphoneScan">Scan texts from my iPhone backup</button><span class="small muted">Desktop app: finds the backup on this computer for you.</span></div>
         <h3>Connect your inbox</h3>
-        <p class="small muted">Read-only: Bot Purge can read your mail to find scams but can never send, delete or change anything. Protect checks it every day.</p>
-        <div class="row" id="mailLinks"></div>
+        <p class="small muted">Read-only by default: Bot Purge reads your Inbox and Spam folders to find scams but can't send, delete or change anything. Protect checks them every day.</p>
+        <label class="small"><input type="checkbox" id="mClean"> Also allow cleanup: move the scam and spam emails Bot Purge flags to Trash, only when I press the button (never deleted for good)</label>
+        <div class="row" id="mailLinks" style="margin-top:6px"></div>
         <h3>Paste comments or live chat</h3>
         <p class="small muted">Data exports don't include comments on your posts or live chat. Copy them from the app and paste them here, one per line as <code>handle: message</code>.</p>
         <div class="row">
@@ -229,8 +281,13 @@
       </div>
       <div class="panel">
         <div class="row"><h2 style="margin:0">Flagged senders</h2><span style="flex:1"></span>
+          <button class="small primary hidden" id="mCleanAll">🗑️ Move all flagged email to Trash</button>
+          <button class="small hidden" id="mCleanSel">🗑️ Move selected to Trash</button>
           <select id="sTab"><option value="flagged">Flagged</option><option value="whitelisted">Real people</option><option value="removed">Blocked / removed</option><option value="all">Everyone</option></select></div>
-        <div class="table-wrap"><table class="stack"><thead><tr><th>Sender</th><th>Score</th><th>Why</th><th class="hide-sm">Messages</th><th></th></tr></thead><tbody id="sRows"></tbody></table></div>
+        <p class="small" id="sSummary"></p>
+        <label class="small hidden" id="sSelAllWrap"><input type="checkbox" id="sSelAll"> Select all flagged email senders</label>
+        <p class="notice small hidden" id="mCleanResult"></p>
+        <div class="table-wrap"><table class="stack"><thead><tr><th></th><th>Sender</th><th>Score</th><th>Why</th><th class="hide-sm">Messages</th><th></th></tr></thead><tbody id="sRows"></tbody></table></div>
         <div id="sDetail"></div>
       </div>
       <div class="panel">
@@ -338,7 +395,7 @@ function show() {
   $("auth").classList.toggle("hidden", !!token);
   $("appView").classList.toggle("hidden", !token);
   $("signout").classList.toggle("hidden", !token);
-  if (token) { $("myToken").textContent = token; loadDash(); }
+  if (token) { $("myToken").textContent = token; loadDash(); loadAgentPrefs(); }
 }
 
 $("signup").onclick = async () => {
@@ -356,7 +413,7 @@ function switchTab(t) {
   state.tab = t;
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   document.querySelectorAll("[data-view]").forEach(v => v.classList.toggle("hidden", v.dataset.view !== t));
-  ({ dash: loadDash, flags: loadFlags, queue: loadJobs, howto: loadHowto, log: loadLog, alerts: loadAlerts, plans: loadPlans, inbox: () => { loadMail().catch(() => {}); return loadInbox(); }, live: loadLive })[t]();
+  ({ dash: loadDash, flags: loadFlags, queue: loadJobs, howto: loadHowto, log: loadLog, alerts: loadAlerts, plans: loadPlans, agent: loadAgent, inbox: () => { loadMail().catch(() => {}); return loadInbox(); }, live: loadLive })[t]();
 }
 
 // ---------- dashboard ----------
@@ -369,6 +426,7 @@ const LG_HOW = { twitch: "Twitch and YouTube are moderated through their officia
 $("lgPlatform").onchange = () => $("lgHow").textContent = LG_HOW[$("lgPlatform").value];
 let lgTimer = null, lgCurrent = null, lgDemoRunning = false;
 async function loadLive() {
+  applyLivePrefs();
   $("lgHow").textContent = LG_HOW[$("lgPlatform").value];
   const list = await api("/api/liveguard/sessions", { headers: auth() });
   $("lgList").innerHTML = list.length ? list.map(x => `<div class="row card" style="margin-bottom:6px"><b>${esc(PLATFORM_NAMES[x.platform] || x.platform)}</b><span>${esc(x.channel)}</span>
@@ -478,11 +536,11 @@ $("sTab").onchange = loadInbox;
 async function loadMail() {
   const links = await api("/api/mail", { headers: auth() });
   $("mailLinks").innerHTML = links.map(l => l.connected
-    ? `<span class="chip good">${esc(l.name)} connected${l.last_sync ? " · checked " + fmtDate(l.last_sync) : ""}</span>${l.last_error ? `<span class="chip bad" title="${esc(l.last_error)}">needs attention</span>` : ""}
+    ? `<span class="chip good">${esc(l.name)} connected${l.can_clean ? " · cleanup on" : ""}${l.last_sync ? " · checked " + fmtDate(l.last_sync) : ""}</span>${l.last_error ? `<span class="chip bad" title="${esc(l.last_error)}">needs attention</span>` : ""}
        <button class="small" data-msync="${l.provider}">Check now</button><button class="small link" data-moff="${l.provider}">Disconnect</button>`
     : `<button data-mon="${l.provider}" ${l.available ? "" : "disabled title='Not set up in this copy yet'"}>Connect ${esc(l.name)}</button>`).join("");
   document.querySelectorAll("[data-mon]").forEach(b => b.onclick = async () => {
-    try { const r = await api(`/api/mail/${b.dataset.mon}/connect`, { method: "POST", headers: auth() });
+    try { const r = await api(`/api/mail/${b.dataset.mon}/connect${$("mClean").checked ? "?cleanup=true" : ""}`, { method: "POST", headers: auth() });
       window.open(r.authorize_url, "_blank", "noopener"); toast("Finish signing in in your browser, then come back here.", 6000);
       window.addEventListener("focus", () => { loadMail(); loadInbox(); }, { once: true }); }
     catch (e) { paywalled(e); }
@@ -492,19 +550,68 @@ async function loadMail() {
     catch (e) { paywalled(e); }
   });
   document.querySelectorAll("[data-moff]").forEach(b => b.onclick = async () => { await api(`/api/mail/${b.dataset.moff}`, { method: "DELETE", headers: auth() }); loadMail(); });
+  state.canClean = links.some(l => l.connected && l.can_clean);
+  $("mCleanAll").classList.toggle("hidden", !state.canClean);
 }
+// What the flagged senders have in common, in one line: fraud and phishing, repetitive spam, bot-style accounts.
+const SENDER_GROUPS = [["fraud & phishing", /^(brand_spoof|lookalike_domain|phishing_language|link_mismatch|raw_ip_link|free_mail_brand|auth_fail|reply_to_mismatch|fake_giveaway|solicitation)$/],
+  ["repetitive spam", /^(repeat_sender|template_across_senders|flooding)$/], ["bot-style accounts", /^(bracket_emoji|ai_artifact|canary|known_bot|generic_comment|faceless_avatar)$/]];
+function renderSenderSummary(rows) {
+  const flagged = rows.filter(r => r.status === "active" && ["likely_bot", "suspicious"].includes(r.label));
+  if ($("sTab").value !== "flagged" || !flagged.length) { $("sSummary").textContent = ""; return; }
+  const parts = SENDER_GROUPS.map(([name, rx]) => [name, flagged.filter(r => (r.reason_codes || []).some(c => rx.test(c))).length]).filter(x => x[1]);
+  const emails = flagged.filter(r => r.platform === "email").length;
+  $("sSummary").innerHTML = `<b>${flagged.length} flagged sender${flagged.length === 1 ? "" : "s"}</b>${emails ? ` (${emails} by email)` : ""}: ` +
+    parts.map(([n, c]) => `${c} ${n}`).join(" · ");
+}
+// Move the selected senders' email to Trash (checked rows), or every flagged sender's (the button above).
+$("mCleanSel").onclick = async () => {
+  const senders = [...document.querySelectorAll(".sPick:checked")].map(p => p.dataset.sid);
+  if (!senders.length) return;
+  $("mCleanSel").disabled = true;
+  try { const r = await api("/api/mail/clean", { method: "POST", headers: auth(), body: { to: "trash", senders } });
+    $("mCleanResult").textContent = `✅ Moved ${r.moved} emails from ${r.senders} selected senders to Trash. Real mail wasn't touched.`; $("mCleanResult").classList.remove("hidden");
+    loadInbox(); } catch (e) { paywalled(e); }
+  finally { $("mCleanSel").disabled = false; }
+};
+// Move every flagged sender's email to Trash: the first press asks, the second does it.
+$("mCleanAll").onclick = async () => {
+  const b = $("mCleanAll");
+  if (!b.dataset.sure) {
+    const n = (await api("/api/inbox/senders?tab=flagged", { headers: auth() })).filter(r => r.platform === "email").length;
+    b.dataset.sure = "1"; b.textContent = `Yes, move email from ${n} flagged senders to Trash`;
+    setTimeout(() => { delete b.dataset.sure; b.textContent = "🗑️ Move all flagged email to Trash"; }, 8000); return;
+  }
+  delete b.dataset.sure; b.disabled = true;
+  try { const r = await api("/api/mail/clean", { method: "POST", headers: auth(), body: { to: "trash" } });
+    toast(`Moved ${r.moved} emails from ${r.senders} senders to Trash. You can undo it in your mailbox.`, 6000);
+    $("mCleanResult").textContent = `✅ Moved ${r.moved} scam and spam emails from ${r.senders} senders to Trash.` +
+      (r.already_in_spam ? ` ${r.already_in_spam} more ${r.already_in_spam === 1 ? "was" : "were"} already in Spam.` : "") + " Real mail wasn't touched.";
+    $("mCleanResult").classList.remove("hidden");
+    loadInbox(); } catch (e) { paywalled(e); }
+  finally { b.disabled = false; b.textContent = "🗑️ Move all flagged email to Trash"; }
+};
 async function loadInbox() {
   const rows = await api(`/api/inbox/senders?tab=${$("sTab").value}`, { headers: auth() });
+  renderSenderSummary(rows);
   $("sRows").innerHTML = rows.map(r => {
     const who = r.name || (r.handle ? "@" + r.handle : r.sender_id);
     const k = `${esc(r.platform)}|${esc(r.sender_id)}`;
-    return `<tr><td><div class="who">${avatar(who, r.sender_id)}<div><div class="n">${esc(who)}</div><div class="small muted">${esc(r.platform === "email" ? "Email · " + r.sender_id : (SOURCE_NAMES[r.platform] || r.platform))}</div>
+    const tick = r.platform === "email" && r.status === "active" ? `<input type="checkbox" class="sPick" data-sid="${esc(r.sender_id)}">` : "";
+    return `<tr><td>${tick}</td><td><div class="who">${avatar(who, r.sender_id)}<div><div class="n">${esc(who)}</div><div class="small muted">${esc(r.platform === "email" ? "Email · " + r.sender_id : (SOURCE_NAMES[r.platform] || r.platform))}</div>
         ${r.canary_hit ? `<span class="chip bad">Canary: confirmed AI bot</span>` : ""}</div></div></td>
       <td><span class="pill ${esc(r.label)}">${Math.round(r.score)}</span></td>
       <td><ul class="reasons">${r.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul></td><td class="hide-sm">${r.items}</td>
       <td><div class="row"><button class="small" data-see="${k}">Messages</button>
         ${r.status === "active" ? `<button class="small" data-sfb="${k}" data-bot="0">Real person</button><button class="small" data-block="${k}">Blocked it</button>` : `<button class="small" data-undo="${k}">Undo</button>`}</div></td></tr>`;
-  }).join("") || `<tr><td colspan="5" class="muted">Nothing here yet.</td></tr>`;
+  }).join("") || `<tr><td colspan="6" class="muted">Nothing here yet.</td></tr>`;
+  const picks = () => [...document.querySelectorAll(".sPick")];
+  $("sSelAllWrap").classList.toggle("hidden", !(state.canClean && picks().length));
+  $("sSelAll").checked = false; $("mCleanSel").classList.add("hidden");
+  const sync = () => { const n = picks().filter(p => p.checked).length; $("mCleanSel").classList.toggle("hidden", !n);
+    $("mCleanSel").textContent = `🗑️ Move ${n} selected to Trash`; $("sSelAll").checked = n && n === picks().length; };
+  $("sSelAll").onchange = () => { picks().forEach(p => p.checked = $("sSelAll").checked); sync(); };
+  picks().forEach(p => p.onchange = sync);
   const split = k => { const i = k.indexOf("|"); return [k.slice(0, i), k.slice(i + 1)]; };
   document.querySelectorAll("[data-see]").forEach(b => b.onclick = async () => {
     const [p, id] = split(b.dataset.see);
@@ -567,12 +674,12 @@ async function loadResult() {
   const box = $("scanResult");
   if (!s.last_scan) { box.innerHTML = `<div class="result-head"><div class="shield idle">🛡️</div><div><div class="big">Run your first free scan</div><div class="muted">Connect X or upload an export below. Scanning is always free.</div></div></div>`; return; }
   const color = s.status === "clean" ? "ok" : s.status === "at_risk" ? "bad" : "warn";
-  const head = s.threats ? `${s.threats} threat${s.threats > 1 ? "s" : ""} found` : "No threats found";
+  const head = s.threats ? `${s.threats} bot${s.threats > 1 ? "s" : ""} found` : "No bots found";
   box.innerHTML = `<div class="result-head"><div class="shield ${color}">${s.threats ? "⚠️" : "✅"}</div><div>
       <div class="big">${head}</div><div class="muted small">${s.scanned.toLocaleString()} accounts scanned · ${s.high_risk} high risk · ${s.bot_rings} bot ring${s.bot_rings === 1 ? "" : "s"} · last scan ${fmtDate(s.last_scan)}${s.removed ? ` · ${s.removed} removed so far` : ""}</div></div></div>
     <div class="cats">${Object.entries(s.categories).map(([k, n]) => `<div class="cat ${n ? "hit" : ""}"><span>${CAT_NAMES[k]}</span><b>${n}</b></div>`).join("")}</div>
     ${s.threats ? `<div class="cta">
-      <button class="primary big-btn" id="ctaClean">Remove all ${s.threats} threats</button><span class="price">${priceTag(plan("cleanup"))}</span>
+      <button class="primary big-btn" id="ctaClean">Remove all ${s.threats} bots</button><span class="price">${priceTag(plan("cleanup"))}</span>
       <button class="big-btn" id="ctaProtect">Protect me from future bots</button><span class="price">${priceTag(plan("protect"))}</span>
       <button class="link" id="ctaReview">Review the list first</button></div>` : `<div class="cta"><button class="big-btn" id="ctaProtect">Stay protected</button><span class="price">${priceTag(plan("protect"))}</span></div>`}`;
   if ($("ctaClean")) $("ctaClean").onclick = async () => { await activate("cleanup", true); state.ftab = "likely_bot"; switchTab("flags"); };
@@ -652,7 +759,20 @@ function fillPlatformSelect() {
   $("fPlatform").value = state.platform;
 }
 async function loadHelp() { state.help = await api("/api/import/help"); renderHelp(); }
-function renderHelp() { $("impHelp").innerHTML = (state.help[$("impPlatform").value] || []).map(s => `<li>${esc(s)}</li>`).join(""); }
+const AUTO_HELP = ["Upload the .zip exactly as you downloaded it. No need to unzip it: we work out which network it's from.",
+  "You can also drag the file onto this box.", "To see how to download your data, pick your network in the list."];
+function renderHelp() { const p = $("impPlatform").value;
+  $("impHelp").innerHTML = (p === "auto" ? AUTO_HELP : state.help[p] || []).map(s => `<li>${esc(s)}</li>`).join(""); }
+// Drag a downloaded export (zip or file) onto an upload box instead of browsing for it.
+function dropZone(input, go) {
+  const box = input.closest(".panel");
+  box.addEventListener("dragover", e => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); box.classList.add("dropping"); } });
+  box.addEventListener("dragleave", e => { if (!box.contains(e.relatedTarget)) box.classList.remove("dropping"); });
+  box.addEventListener("drop", e => { e.preventDefault(); box.classList.remove("dropping");
+    if (!e.dataTransfer.files.length) return; input.files = e.dataTransfer.files; go.click(); });
+}
+dropZone($("impFile"), $("impGo"));
+dropZone($("mFile"), $("mImport"));
 $("impPlatform").onchange = renderHelp;
 $("impGo").onclick = async () => {
   const f = $("impFile").files[0];
@@ -662,7 +782,7 @@ $("impGo").onclick = async () => {
   try {
     const r = await api(`/api/import/${$("impPlatform").value}`, { method: "POST", form: fd, headers: auth() });
     const flagged = (r.counts.likely_bot || 0) + (r.counts.suspicious || 0);
-    toast(`Imported ${r.imported} connections · ${flagged} flagged${r.reconciled.removed ? ` · ${r.reconciled.removed} removals confirmed` : ""}`);
+    toast(`${r.platform ? (PLATFORM_NAMES[r.platform] || r.platform) + ": " : ""}Imported ${r.imported} connections · ${flagged} flagged${r.reconciled.removed ? ` · ${r.reconciled.removed} removals confirmed` : ""}`);
     $("impFile").value = ""; loadDash();
   } catch (e) { toast(e.message); } finally { $("impGo").disabled = false; $("impGo").textContent = "Upload & scan"; }
 };
@@ -752,7 +872,8 @@ async function startJobs() {
     const verbs = Object.entries(counts).map(([d, c]) => d === "friend" ? `unfriend ${plural(c, "friend", "friends")}`
       : d === "follower" ? `remove ${plural(c, "follower", "followers")}` : `unfollow ${plural(c, "account", "accounts")}`).join(", ");
     $("cTitle").textContent = `${n} account${n > 1 ? "s" : ""} on ${PLATFORM_NAMES[p]}`;
-    $("cDoRemove").checked = true; $("cDoBlock").checked = false; $("cDoReport").checked = false;
+    const dA = (state.agentPrefs && state.agentPrefs.default_actions) || ["remove"];        // as told to the agent
+    $("cDoRemove").checked = true; $("cDoBlock").checked = dA.includes("block"); $("cDoReport").checked = !!bots && dA.includes("report");
     $("cDoReport").disabled = !bots;
     const refresh = () => {
       const block = $("cDoBlock").checked, report = $("cDoReport").checked;
@@ -833,8 +954,16 @@ async function loadJob() {
       <td><div class="row">${i.profile_url ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(i.profile_url)}">Open</a>` : ""}
       ${canTick ? `<button class="small" data-ok="${i.idx}">Done</button><button class="small" data-skip="${i.idx}">Skip</button>` : ""}</div></td></tr>`;
   }).join("") + "</tbody></table></div>";
+  if (j.mode === "agent" && j.items.some(i => i.status === "failed")) {
+    const act = (j.items.find(i => i.status === "failed") || {}).action;
+    body += `<div class="notice" style="margin-top:10px">The agent couldn't finish some of these on ${PLATFORM_NAMES[j.platform] || j.platform}. Teach it how you do it:
+      <div class="row" style="margin-top:6px"><button class="small" data-teach="write" data-p="${esc(j.platform)}" data-a="${esc(act)}">✍️ Write the steps</button>
+      <button class="small" data-teach="show" data-p="${esc(j.platform)}" data-a="${esc(act)}">🖱️ Show the agent</button>
+      <button class="small" data-teach="talk" data-p="${esc(j.platform)}" data-a="${esc(act)}">💬 Talk it through</button></div></div>`;
+  }
   body += `<p class="small muted">“Pending” items are confirmed on your next import: anyone gone from the new export is marked Removed; anyone still there is marked Failed so you can retry.</p>`;
   $("jobPanel").innerHTML = body; $("jobPanel").classList.remove("hidden");
+  document.querySelectorAll("[data-teach]").forEach(b => b.onclick = () => teachFrom(b.dataset.p, b.dataset.a, b.dataset.teach));
   $("jobPanel").querySelectorAll("[data-st]").forEach(b => b.onclick = async () => { await api(`/api/removals/${j.id}/state`, { method: "POST", body: { state: b.dataset.st }, headers: auth() }); loadJobs(); });
   $("jobPanel").querySelectorAll("[data-ok]").forEach(b => b.onclick = () => confirmItem(j.id, b.dataset.ok, "done"));
   $("jobPanel").querySelectorAll("[data-skip]").forEach(b => b.onclick = () => confirmItem(j.id, b.dataset.skip, "skipped"));
@@ -925,6 +1054,110 @@ $("teachGo").onclick = async () => {
     if (r.saved) loadHowto();
   } catch (e) { paywalled(e); $("teachNote").textContent = ""; }
   finally { $("teachGo").disabled = false; }
+};
+
+// ---------- your agent ----------
+async function loadAgentPrefs() {
+  try { const r = await api("/api/agent/chat", { headers: auth() }); state.agentPrefs = r.prefs; state.agentChat = r; return r; } catch (e) { return null; }
+}
+function applyLivePrefs() {        // Live Guard's chat rules start from what the person told their agent
+  const l = (state.agentPrefs && state.agentPrefs.live) || {};
+  if ("no_politics" in l) $("lgNoPolitics").checked = !!l.no_politics;
+  if ("no_abuse" in l) $("lgNoAbuse").checked = !!l.no_abuse;
+  if (l.blocked_phrases && !$("lgWords").value) $("lgWords").value = l.blocked_phrases.join(", ");
+  if (l.mode && $("lgMode")) $("lgMode").value = l.mode;
+}
+function prefsLine(p) {
+  if (!p) return "";
+  const parts = [`Pace: ${p.pace}`, `up to ${p.max_per_run} per run`, `by default: ${p.default_actions.join(", ")}`];
+  if (p.objectives.length) parts.push(`objectives: ${p.objectives.join("; ")}`);
+  return parts.join(" · ");
+}
+function renderChat(msgs) {
+  $("acLog").innerHTML = msgs.map(m => `<div class="msg ${m.role === "user" ? "me" : "agent"}">${esc(m.text)}</div>`).join("") ||
+    `<div class="msg agent">Hi! I'm your Bot Purge agent. Tell me how you'd like me to work: how fast, how many at a time, who to never touch, what to focus on, or how a platform works for you.</div>`;
+  $("acLog").scrollTop = $("acLog").scrollHeight;
+}
+const AC_IDEAS = ["Go slower", "Only 20 at a time", "Always block too", "Scan every week", "Keep politics out of my live chat", "What are my settings?"];
+async function loadAgent() {
+  const r = await loadAgentPrefs();
+  if (r) { renderChat(r.messages); $("acPrefs").textContent = prefsLine(r.prefs) + (r.engine === "claude" ? " · understood by Claude" : ""); state.teachable = r.teachable; }
+  $("acIdeas").innerHTML = AC_IDEAS.map(t => `<button class="small link" data-idea="${esc(t)}">${esc(t)}</button>`).join("");
+  document.querySelectorAll("[data-idea]").forEach(b => b.onclick = () => { $("acText").value = b.dataset.idea; $("acSend").click(); });
+  const plats = Object.keys(state.teachable || PLATFORM_ACTIONS);
+  if (!$("tPlat").options.length) { $("tPlat").innerHTML = plats.map(p => `<option value="${p}">${PLATFORM_NAMES[p] || p}</option>`).join(""); fillTeachActions(); }
+  const s = await api("/api/agent/signins", { headers: auth() }).catch(() => null);
+  if (s) {
+    $("sForm").classList.toggle("hidden", !s.available); $("sOnlyDesktop").classList.toggle("hidden", s.available);
+    if (!$("sPlat").options.length) $("sPlat").innerHTML = s.signins.map(x => `<option value="${x.platform}">${PLATFORM_NAMES[x.platform] || x.platform}</option>`).join("");
+    $("sList").innerHTML = s.signins.filter(x => x.saved).map(x => `<div class="row small"><span class="chip good">${PLATFORM_NAMES[x.platform] || x.platform}: ${esc(x.username)}</span>
+      <button class="small link" data-forget="${x.platform}">Forget</button></div>`).join("");
+    document.querySelectorAll("[data-forget]").forEach(b => b.onclick = async () => { await api(`/api/agent/signins/${b.dataset.forget}`, { method: "DELETE", headers: auth() }); loadAgent(); });
+  }
+}
+function teachLiveToggle() {
+  const live = $("tAct").value.startsWith("live_");
+  $("tLive").classList.toggle("hidden", !live);
+  $("tSteps").placeholder = live ? 'Click "{author_name}" (the chatter\'s name is filled in each time).\nClick "Manage".\nClick "Remove from chat".'
+                                 : 'Click "More".\nClick "Block".\nClick "Block" if asked again.';
+}
+function fillTeachActions() {
+  const acts = (state.teachable || PLATFORM_ACTIONS)[$("tPlat").value] || [];
+  $("tAct").innerHTML = acts.map(a => `<option value="${a}">${ACTION_NAMES[a] || a}</option>`).join("");
+  teachLiveToggle();
+}
+$("tPlat").onchange = fillTeachActions;
+$("tAct").onchange = teachLiveToggle;
+async function teachFrom(platform, action, how) {
+  switchTab("agent"); await loadAgent();
+  $("tPlat").value = platform; fillTeachActions(); if (action) $("tAct").value = action; $("tAct").onchange();
+  ({ write: () => $("tWrite").click(), show: () => $("tWrite").scrollIntoView({ block: "center" }), talk: () => $("tTalk").click() })[how]();
+}
+$("tWrite").onclick = () => { $("tWriteBox").classList.toggle("hidden"); $("tSteps").focus(); };
+$("tSave").onclick = async () => {
+  const steps = $("tSteps").value.split("\n").map(x => x.trim()).filter(Boolean);
+  try { await api("/api/instructions", { method: "POST", headers: auth(), body: { platform: $("tPlat").value, device: "web", action: $("tAct").value, steps, share: false } });
+    $("tNote").textContent = `Saved. The agent follows your steps to ${(ACTION_NAMES[$("tAct").value] || "").toLowerCase()} on ${PLATFORM_NAMES[$("tPlat").value]} from now on.`;
+    $("tWriteBox").classList.add("hidden"); } catch (e) { toast(e.message); }
+};
+$("tShow").onclick = async () => {
+  const platform = $("tPlat").value, action = $("tAct").value, live = action.startsWith("live_");
+  const pick = !live && state.rows && state.rows.find(r => r.platform === platform);
+  $("tNote").textContent = `A Bot Purge window is opening on ${PLATFORM_NAMES[platform]}. Sign in if asked, do it once, then press Done in its top bar.`;
+  $("tShow").disabled = true;
+  try {
+    const r = await api("/api/agent/teach", { method: "POST", headers: auth(), body: { platform, action, account_id: pick ? pick.account_id : null,
+      start_url: live ? $("tLiveUrl").value.trim() : null, example_name: live ? $("tChatter").value.trim() : null } });
+    $("tResult").innerHTML = r.steps.map(x => `<li>${esc(x)}</li>`).join("");
+    $("tNote").textContent = r.note || (r.saved ? "Saved." : "Nothing saved.");
+  } catch (e) { paywalled(e); } finally { $("tShow").disabled = false; }
+};
+$("tTalk").onclick = () => {
+  state.chatCtx = { platform: $("tPlat").value, action: $("tAct").value };
+  $("acCtx").textContent = `Teaching: ${PLATFORM_NAMES[state.chatCtx.platform]} · ${ACTION_NAMES[state.chatCtx.action]}. Tell me the steps, e.g. click "More", then click "Block".`;
+  $("acCtx").classList.remove("hidden"); $("acText").focus(); $("acText").scrollIntoView({ block: "center" });
+};
+$("acSend").onclick = async () => {
+  const text = $("acText").value.trim(); if (!text) return;
+  $("acSend").disabled = true;
+  try {
+    const r = await api("/api/agent/chat", { method: "POST", headers: auth(), body: { text, ...(state.chatCtx || {}) } });
+    $("acText").value = ""; state.agentPrefs = r.prefs; $("acPrefs").textContent = prefsLine(r.prefs);
+    const h = await api("/api/agent/chat", { headers: auth() }); renderChat(h.messages);
+    if (r.changes.some(c => c.startsWith("Saved your steps"))) { state.chatCtx = null; $("acCtx").classList.add("hidden"); }
+    const sc = r.prefs.scope;                          // "only scan my TikTok followers": Flagged accounts opens on that
+    if (sc && r.changes.some(c => c.startsWith("Scanning only"))) {
+      if (sc.platforms && sc.platforms.length === 1) state.platform = sc.platforms[0];
+      if (sc.directions && sc.directions.length === 1) { state.dir = sc.directions[0]; document.querySelectorAll("#fDir button").forEach(x => x.classList.toggle("on", x.dataset.dir === state.dir)); }
+      $("acLog").insertAdjacentHTML("beforeend", `<div class="msg agent"><button class="small primary" id="acReview">Review and remove them</button></div>`);
+      $("acReview").onclick = () => switchTab("flags");
+    }
+  } catch (e) { paywalled(e); } finally { $("acSend").disabled = false; }
+};
+$("acText").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("acSend").click(); } });
+$("sSave").onclick = async () => {
+  try { await api(`/api/agent/signins/${$("sPlat").value}`, { method: "PUT", headers: auth(), body: { username: $("sUser").value, password: $("sPass").value } });
+    $("sUser").value = ""; $("sPass").value = ""; toast("Saved on this computer"); loadAgent(); } catch (e) { paywalled(e); }
 };
 
 // ---------- installable app ----------

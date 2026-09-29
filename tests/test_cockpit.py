@@ -159,3 +159,58 @@ def test_teach_mode_records_steps_the_agent_can_replay(page):
     assert res.ok, (res.error, res.log)
     assert page.evaluate("window.blocked") and page.evaluate("window.palette") == 1
     assert page.get_by_placeholder("Search").input_value() == "lucy2"
+
+
+LOGIN = """<!doctype html><html><body><h1>Log in</h1>
+<form onsubmit="event.preventDefault(); window.sent = [this.username.value, this.p.value]; location.href = window.needCode ? '/2fa' : '/';">
+<input name="username" autocomplete="username"><input name="p" type="password"><button>Log in</button></form>
+<script>window.needCode = new URLSearchParams(location.search).has('code') || sessionStorage.code;</script></body></html>"""
+HOME_IN = "<!doctype html><html><body><h1>For You</h1><button>Profile</button></body></html>"
+CODE = "<!doctype html><html><body><h1>Enter the 6-digit code</h1><input name='otp'></body></html>"
+
+
+def _tiktok(page, code=False):
+    def serve(r):
+        path = r.request.url.split("tiktok.com", 1)[1]
+        html = CODE if path.startswith("/2fa") else LOGIN if "/login" in path else HOME_IN
+        if code and "/login" in path:
+            html = html.replace("window.needCode = ", "window.needCode = true || ")
+        r.fulfill(body=html, content_type="text/html; charset=utf-8")
+    page.route("https://www.tiktok.com/**", serve)
+
+
+@browser
+def test_saved_sign_in_types_into_the_login_page(page):
+    from botpurge.agent.signin import ensure_signed_in, needs_sign_in
+
+    _tiktok(page)
+    cp = Cockpit(page.context).install()
+    page.goto("https://www.tiktok.com/login/phone-or-email/email")
+    assert needs_sign_in(page)
+    assert ensure_signed_in(page, "tiktok", {"username": "david", "password": "pw1"}, cp) is True    # home shows no login: nothing to do
+    from botpurge.agent.signin import sign_in
+    sent = []
+    page.expose_function("__sent", lambda u, p: sent.append((u, p)))
+    page.add_init_script("document.addEventListener('submit', e => window.__sent(e.target.username.value, e.target.p.value), true)")
+    assert sign_in(page, "tiktok", {"username": "david", "password": "pw1"}, cp, settle_ms=500)
+    assert sent == [("david", "pw1")] and cp.state == "run"                                   # the agent's own typing isn't the person taking over
+    assert not needs_sign_in(page)
+
+
+@browser
+def test_sign_in_code_is_handed_to_the_person(page):
+    from botpurge.agent.signin import sign_in
+
+    _tiktok(page, code=True)
+    cp = Cockpit(page.context, help_timeout=5).install()
+    seen = []
+
+    def person(pg, state):
+        if state == "paused" and not seen:
+            seen.append(pg.evaluate("document.getElementById('__bpMsg').textContent"))
+            pg.goto("https://www.tiktok.com/")               # they typed the code and got in
+            cp._on({"type": "resume"})
+
+    cp.person = person
+    assert sign_in(page, "tiktok", {"username": "david", "password": "pw1"}, cp, settle_ms=500)
+    assert seen and "Finish signing in" in seen[0]

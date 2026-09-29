@@ -1,15 +1,16 @@
 # Bot Purge
 
-**Bots, fakes and scammers, gone.** Bot Purge scans your followers, friends and the accounts you follow, plus your DMs, texts, email, connected apps and live-stream chats. It shows every threat it finds, antivirus-style ("37 threats found"), and removes them. For people and creators, and for companies that want to purge bots from their whole platform.
+**Bots, fakes and scammers, gone.** Bot Purge scans your followers, friends and the accounts you follow, plus your DMs, texts, email, connected apps and live-stream chats. It shows every threat it finds, antivirus-style ("37 bots found"), and removes them. For people and creators, and for companies that want to purge bots from their whole platform.
 
-It never asks for a social media password. X connects through its official sign-in; everything else is read from the data export each platform lets you download, or from a phone or mail backup on your own computer.
+It never needs a social media password. X connects through its official sign-in; everything else is read from the data export each platform lets you download, or from a phone or mail backup on your own computer.
 
 ## Screenshots
 
 | | | | |
 |:-:|:-:|:-:|:-:|
-| <img src="docs/screenshots/01-start.jpg" width="200" alt="Sign up with just an email"><br>**Free scan, no passwords** | <img src="docs/screenshots/02-threats-found.jpg" width="200" alt="Threats found on every network"><br>**Threats found, every network** | <img src="docs/screenshots/03-flagged-accounts.jpg" width="200" alt="Flagged accounts with reasons"><br>**Every flag has reasons** | <img src="docs/screenshots/04-remove-block-report.jpg" width="200" alt="Remove, block or report"><br>**Remove, block or report** |
+| <img src="docs/screenshots/01-start.jpg" width="200" alt="Sign up with just an email"><br>**Free scan, no passwords** | <img src="docs/screenshots/02-threats-found.jpg" width="200" alt="Bots found on every network"><br>**Bots found, every network** | <img src="docs/screenshots/03-flagged-accounts.jpg" width="200" alt="Flagged accounts with reasons"><br>**Every flag has reasons** | <img src="docs/screenshots/04-remove-block-report.jpg" width="200" alt="Remove, block or report"><br>**Remove, block or report** |
 | <img src="docs/screenshots/05-step-by-step.jpg" width="200" alt="Step-by-step instructions"><br>**Step by step, or done for you** | <img src="docs/screenshots/06-messages-email-texts.jpg" width="200" alt="Scam messages, emails and texts"><br>**DMs, texts and email** | <img src="docs/screenshots/07-live-guard.jpg" width="200" alt="Live Guard bans giveaway bots"><br>**Live Guard** | <img src="docs/screenshots/08-plans.jpg" width="200" alt="Plans"><br>**Plans: free during beta** |
+| <img src="docs/screenshots/09-select-all.jpg" width="200" alt="Select all flagged accounts"><br>**Select all, delete in one go** | <img src="docs/screenshots/10-removal-queue.jpg" width="200" alt="Every selected account in the removal queue"><br>**One removal list** | <img src="docs/screenshots/11-gmail-yahoo-mail.jpg" width="200" alt="Scam emails from Gmail and Yahoo Mail flagged, ready to move to Trash"><br>**Scam email to Trash** | <img src="docs/screenshots/12-your-agent.jpg" width="200" alt="Telling the agent to scan only TikTok followers"><br>**Tell your agent what to scan** |
 
 ## Plans
 
@@ -72,11 +73,19 @@ Detection judges **behaviour, never opinions**. A flood of copy-pasted lines get
   - scam pressure, links that go somewhere other than they say
   - abused free hosting, dangerous attachments, HTML smuggling
   - callback-phishing invoices, sextortion bitcoin demands, gift-card requests
-- **Live inboxes:** connect Gmail or Outlook, read-only. Protect checks the last 30 days of mail every day with all the email rules.
+- **Live inboxes:** connect Gmail, Outlook or Yahoo Mail. Read-only by default: Protect checks the last 30 days of the Inbox and Spam folders every day with all the email rules.
+- **Email cleanup (optional):** tick "Also allow cleanup" when connecting. The flagged-senders list sums up what it found (fraud and phishing, repetitive spam, bot-style accounts); tick the senders you want, or **Select all**, and **Move selected to Trash**, or **Move all flagged email to Trash** in one press. It uses Gmail `gmail.modify`, Outlook `Mail.ReadWrite` and Yahoo `mail-w`. It only runs when you press the button, never deletes for good (undo it in your mailbox), and never touches real people's mail.
 - **Connected apps:** follower-growth, auto-like, "who viewed my profile", crypto-giveaway and DM-access apps holding access to your accounts, with the steps to revoke each.
 - **Evasion:** before any rule runs, text is normalised. Lookalike letters, zero-width characters, split links ("site . com") and stacked accents are undone, and hiding tricks count as evidence in themselves.
 
 The research behind every rule, with sources and caveats, is in [docs/detection-rules.md](docs/detection-rules.md).
+
+### Tells from real bot accounts
+
+- **Random-letter names:** handles and names like "yznnkdcp" or "ynvpxs" that no person would pick.
+- **Names never set:** a display name still at the default "user45418458969" while the handle is something else.
+- **Hidden faces:** a person is in the profile photo but their face never is (turned away, a phone in front of it in a mirror selfie, or too far away). Stronger than a photo with no person at all.
+- **Live chat:** a random-letter name adds weight to scam text, but never gets a viewer removed on its own.
 
 ### Canary traps
 
@@ -128,7 +137,11 @@ The agent removes, blocks and reports accounts for you in its own browser profil
   - Press **Take over** in its top bar, or just click or type in its window, and it pauses at once. Press **Resume** to hand back.
 - **It asks when it's stuck:** if a platform has moved or renamed a button, the agent asks you to click it. It finishes that step and remembers the new label for every account after.
 - **Teach mode:** on the Removal steps page, press **Teach the agent** and do the process once: clicks, typing, shortcuts, menus, new windows. Your steps are saved as plain-language instructions you can edit, and the agent follows them from then on. Passwords and codes are never recorded.
-- **Pace and limits:** it keeps a human pace and stays under an hourly cap per platform.
+- **Your agent tab:** extra choices, all optional. The ways above keep working as they are.
+  - **When the agent doesn't know how:** pick the platform and what to do, including removing, blocking, reporting, unfriending, and banning, muting or deleting in your live chat. Then either **write the steps**, **show the agent** (a Bot Purge window opens and you share your screen and cursor with it while you do it once), or **talk it through**. Live Guard follows your own live steps too. When a done-for-you run can't finish, the Removal queue offers the same three choices.
+  - **Talk to your agent:** fine-tune it in plain words: "go slower", "only 20 at a time", "always block too", "never remove @jenny_r", "scan every week", "keep politics out of my live chat", "my goal is to clear out crypto scammers", "be a mod for my live stream" (turns on Live Guard's protect mode), "set a canary trap for my videos" (creates one and says where to put the line), "only scan my followers on TikTok for bots, spam and fraud accounts" (it scans right away and tells you what it found), or directions like: On TikTok, to block: click "Share", then click "Block". It changes only settings you could change yourself and says exactly what changed. With `ANTHROPIC_API_KEY` set on the server, Claude understands the conversation (model `BOTPURGE_AGENT_MODEL`); otherwise a built-in reader handles the common requests offline.
+  - **How it signs in:** sign in yourself in the agent's window (nothing saved), or, in the desktop app only, save your username and password. They stay sealed on your computer and are only typed into the platform's own login page. A code, puzzle or "was this you?" check is handed to you.
+- **Pace and limits:** it keeps a human pace (gentle, normal or quick, as you tell it) and stays under an hourly cap per platform.
 - **Stops on pushback:** at the first "Action blocked", "Try again later" or CAPTCHA, it stops the whole job and tells you.
 - **Consent first:** nothing runs until you accept a plain notice that the platforms forbid automation and can restrict accounts. The exact text you agreed to is stored.
 - **Planner hook:** a smarter decision-maker can take over when a button has moved.
@@ -188,7 +201,8 @@ pyinstaller packaging/botpurge.spec   # build the desktop app locally
 | `BOTPURGE_DB`, `BOTPURGE_KEYFILE` / `BOTPURGE_SECRET` | Database path; the key that encrypts stored tokens and signs appeal links |
 | `BOTPURGE_ADMIN_TOKEN` | Moderation of community instructions, creating purge-console tenants, `/api/admin/metrics` |
 | `X_CLIENT_ID`, `X_REDIRECT_URI` | X OAuth app for one-click removal |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID` / `MS_CLIENT_SECRET` | Gmail and Outlook read-only connections |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID` / `MS_CLIENT_SECRET`, `YAHOO_CLIENT_ID` / `YAHOO_CLIENT_SECRET` | Gmail, Outlook and Yahoo Mail read-only connections |
+| `ANTHROPIC_API_KEY`, `BOTPURGE_AGENT_MODEL` | Optional: Claude understands "Talk to your agent" (otherwise the built-in reader) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `BOTPURGE_LICENSE_PRIVATE`, `BOTPURGE_PUBLIC_URL` | The store (see Payments) |
 | `BOTPURGE_STORE_URL`, `BOTPURGE_LICENSE_PUBLIC` | Where a desktop copy buys and checks keys (release builds bake these in) |
 | `BOTPURGE_AGENT_BROWSER` | Force the agent's browser (`chrome`, `msedge`) |
@@ -206,7 +220,7 @@ These gates run on synthetic and collected examples. Before launch, measure on r
 
 - **Thin exports:** Instagram, Facebook, TikTok and LinkedIn exports hold only names or handles and dates, so most bots there reach *Suspicious* (shown for review) rather than being pre-selected.
 - **Terms of service:** automated clicking (the done-for-you agent, and Live Guard on TikTok/Instagram) is against those platforms' terms. It is opt-in with explicit consent, human-paced and self-stopping, but it cannot be made risk-free. Get a legal review before selling it.
-- **Gmail** read access is a Google "restricted scope": until the Google Cloud app passes Google's verification, only test users you add can connect. Outlook needs an app registered in Microsoft Entra.
+- **Gmail** read access is a Google "restricted scope": until the Google Cloud app passes Google's verification, only test users you add can connect. Outlook needs an app registered in Microsoft Entra. Yahoo Mail needs an app at developer.yahoo.com with the Mail read (`mail-r`) permission, which Yahoo approves per app.
 - **Phones** get the installable web app, not App Store builds. Phone apps can't read other apps' followers or messages anyway, so scans still come from data exports.
 
 ## Launch checklist
@@ -218,3 +232,7 @@ These gates run on synthetic and collected examples. Before launch, measure on r
 5. **Downloads:** make the repository public, or mirror the releases, so the download links work for customers.
 6. **Legal:** have a lawyer review the terms, privacy policy and the done-for-you agent (platform terms of service).
 7. **Launch:** set `BOTPURGE_BETA=0` on the store when the beta ends, then push the `v1.0.0` tag.
+
+## License
+
+Copyright (c) 2026 David Bianchi. No one may use, copy, modify or distribute this software until it is signed off on paper by David Bianchi, and any other party must be notarized. See [LICENSE](LICENSE).

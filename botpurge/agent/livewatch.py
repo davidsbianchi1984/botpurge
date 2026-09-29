@@ -19,7 +19,7 @@ from typing import Optional
 
 from ..liveguard import ChatMessage
 from .cockpit import Skipped
-from .programs import LIVE_ACTIONS, fill
+from .programs import LIVE_ACTIONS, compile_steps, fill
 
 # Where each platform's chat lives on the live page: one message, and its author inside it.
 CHAT = {
@@ -76,9 +76,15 @@ LEARN = r"""
 
 def watch(lg, user_id: str, sid: str, page, platform: str, executor=None, cockpit=None, poll: float = 1.0,
           max_seconds: Optional[float] = None, selectors: Optional[dict] = None, learned_store=None,
-          find_timeout: float = 20.0) -> dict:
-    """Moderate the live chat on ``page`` until the session stops (or ``max_seconds`` pass)."""
+          find_timeout: float = 20.0, custom: Optional[dict] = None) -> dict:
+    """Moderate the live chat on ``page`` until the session stops (or ``max_seconds`` pass).
+
+    ``custom`` holds the streamer's own steps ({"ban": [lines], ...}), written or taught; they win over the built-in ones.
+    """
     sel = dict(selectors or CHAT.get(platform) or CHAT["instagram"])
+    # In a live everything happens in the chat: no "open their profile" first.
+    own = {k: [s for s in compile_steps(v) if not (s["op"] == "goto" and s.get("url") == "{profile_url}")]
+           for k, v in (custom or {}).items() if v}
     stats = {"read": 0, "removed": 0, "failed": 0}
     started = time.time()
     last_seen = time.time()
@@ -105,7 +111,8 @@ def watch(lg, user_id: str, sid: str, page, platform: str, executor=None, cockpi
             if r["author_id"] in gone:
                 lg.mark_applied(user_id, sid, r["event_id"])
                 continue
-            prog = LIVE_ACTIONS.get((platform, r["action"])) or (LIVE_ACTIONS.get((platform, "ban")) if r["action"] == "timeout" else None)
+            prog = (own.get(r["action"]) or LIVE_ACTIONS.get((platform, r["action"]))
+                    or (own.get("ban") or LIVE_ACTIONS.get((platform, "ban")) if r["action"] == "timeout" else None))
             if not prog or executor is None:
                 continue                                  # e.g. "delete one message" where the platform has no such option
             if cockpit:

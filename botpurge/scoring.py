@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import Iterable, Optional
 
-from . import imagehash
+from . import imagehash, rules
 from .models import Connection, Direction, Label, Reason, ScoredAccount, label_for
 
 # Base weight of each signal: the most it can contribute on its own.
@@ -32,6 +32,8 @@ WEIGHTS: dict[str, float] = {
     "handle_pattern": 0.30,
     "default_photo": 0.25,
     "faceless_avatar": 0.15,
+    "hidden_face": 0.30,
+    "default_name": 0.25,
     "stock_photo": 0.40,
     "follow_ratio": 0.35,
     "spam_bio": 0.40,
@@ -89,8 +91,10 @@ def _norm_name(s: str) -> str:
 
 
 def _random_handle(handle: str) -> bool:
-    """Heuristic for machine-generated handles: long consonant runs or high digit share."""
+    """Heuristic for machine-generated handles: long consonant runs, keyboard mash or high digit share."""
     h = handle.lower().lstrip("@")
+    if rules.keyboard_mash(h):
+        return True
     if len(h) < 8:
         return False
     digits = sum(ch.isdigit() for ch in h)
@@ -387,8 +391,13 @@ class Scorer:
             add("default_photo", 1.0, "No profile photo")
         elif "blank" in c.avatar_labels:
             add("default_photo", 0.8, "Profile photo is a blank placeholder")
+        elif "hidden_face" in c.avatar_labels:
+            add("hidden_face", 1.0, "Profile photo shows a person but never their face (turned away, phone in front of it, or too far away)")
         elif "no_face" in c.avatar_labels:
             add("faceless_avatar", 1.0, "Profile photo shows no face (back of head, object or scenery)")
+        name = (c.name or "").strip()
+        if re.fullmatch(r"user\d{6,}", name, re.I) and name.lower() != handle.lower():
+            add("default_name", 1.0, f"Never set a name: still the default \u201c{name}\u201d")
         if c.avatar_hash and any(imagehash.similar(c.avatar_hash, s, 6) for s in ctx.stock_hashes):
             add("stock_photo", 1.0, "Profile photo matches a known stock or AI-generated image")
 
