@@ -105,13 +105,17 @@ class Toolbox:
         self._save(p)
         said = []
         if "mode" in rules:
-            said.append("Live Guard removes bots on its own" if live.get("mode") == "protect" else "Live Guard only watches and logs")
+            said.append("I'll be your mod: bots, spam and fraud accounts are removed from your chat as they post"
+                        if live.get("mode") == "protect" else "Live Guard only watches and logs")
         if "no_politics" in rules:
             said.append("political talk kept out of your live chat" if live.get("no_politics") else "political talk allowed in your live chat")
         if "no_abuse" in rules:
             said.append("insults and personal attacks removed" if live.get("no_abuse") else "insults rule off")
         if rules.get("blocked_phrases"):
             said.append("blocked words: " + ", ".join(rules["blocked_phrases"]))
+        if list(rules) == ["mode"] and live.get("mode") == "protect":
+            return self._did("I'll be your live-stream mod: bots, spam and fraud accounts get removed from your chat as they post, "
+                             "starting with your next live")
         return self._did("Live chat: " + "; ".join(said) + " (from your next live)")
 
     def set_rescan(self, cadence: str) -> str:
@@ -287,7 +291,8 @@ def interpret(tb: Toolbox, text: str, context: Optional[dict] = None) -> list[st
     words = re.findall(r"(?:block|ban|remove|filter)\s+(?:the\s+)?(?:words?|phrases?)\s+((?:[\"“'‘][^\"”'’]{1,60}[\"”'’][,\s]*(?:and\s+)?)+)", t, re.I)
     if words:
         live["blocked_phrases"] = re.findall(r"[\"“'‘]([^\"”'’]{1,60})[\"”'’]", words[0])
-    if re.search(r"\b(automatically|on (its|your) own|without asking|protect mode)\b", low) and re.search(r"\blive|chat|stream", low):
+    if (re.search(r"\b(automatically|on (its|your) own|without asking|protect mode)\b", low) and re.search(r"\blive|chat|stream", low)) or \
+            re.search(r"\b(be|act as|work as)\s+(a |an |my |the )?(mod|moderator)\b|\bmoderate my (live|stream|chat)", low):
         live["mode"] = "protect"
     elif re.search(r"\b(just|only) (watch|log)\b", low) and re.search(r"\blive|chat|stream", low):
         live["mode"] = "watch"

@@ -129,3 +129,9 @@ def test_scan_scope_in_plain_words(client, user, svc):
     checked = svc.db.one("SELECT COUNT(*) n FROM flags WHERE user_id=? AND platform='tiktok' AND direction='follower'", (user["_id"],))["n"]
     assert f"checked {checked}," in r["reply"] and checked > 0
     assert "scanning your TikTok followers" in say(client, user, "what are my settings?")["reply"]
+
+
+def test_be_a_mod_for_my_live(client, user):
+    r = say(client, user, "Be a mod for my live stream, removing bot spam and fraud accounts")
+    assert r["prefs"]["live"]["mode"] == "protect" and "I'll be your live-stream mod" in r["reply"]
+    assert "scope" not in r["prefs"] or not r["prefs"].get("scope")          # not mistaken for a follower scan
