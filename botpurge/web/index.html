@@ -561,7 +561,9 @@ $("mCleanAll").onclick = async () => {
   delete b.dataset.sure; b.disabled = true;
   try { const r = await api("/api/mail/clean", { method: "POST", headers: auth(), body: { to: "trash" } });
     toast(`Moved ${r.moved} emails from ${r.senders} senders to Trash. You can undo it in your mailbox.`, 6000);
-    $("mCleanResult").textContent = `✅ Moved ${r.moved} scam and spam emails from ${r.senders} senders to Trash.`; $("mCleanResult").classList.remove("hidden");
+    $("mCleanResult").textContent = `✅ Moved ${r.moved} scam and spam emails from ${r.senders} senders to Trash.` +
+      (r.already_in_spam ? ` ${r.already_in_spam} more ${r.already_in_spam === 1 ? "was" : "were"} already in Spam.` : "") + " Real mail wasn't touched.";
+    $("mCleanResult").classList.remove("hidden");
     loadInbox(); } catch (e) { paywalled(e); }
   finally { b.disabled = false; b.textContent = "🗑️ Move all flagged email to Trash"; }
 };

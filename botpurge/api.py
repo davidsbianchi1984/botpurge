@@ -108,10 +108,16 @@ class Services:
         if not links:
             raise ValueError("Connect a mailbox with cleanup allowed first")
         ids: dict[str, list] = {}
+        in_inbox, in_spam = set(), set()
         for r in self.db.q("SELECT sender_id, extra_json FROM msg_items WHERE user_id=? AND kind='email'", (user_id,)):
             h = (json.loads(r["extra_json"] or "{}") or {}).get("headers", {})
-            if r["sender_id"] in want and h.get("x-provider") in links and h.get("x-folder", "Inbox") == "Inbox" and h.get("Message-ID"):
+            if r["sender_id"] not in want or h.get("x-provider") not in links or not h.get("Message-ID"):
+                continue
+            if h.get("x-folder", "Inbox") == "Inbox":
                 ids.setdefault(h["x-provider"], []).append(h["Message-ID"])
+                in_inbox.add(r["sender_id"])
+            else:
+                in_spam.add(r["sender_id"])                       # already out of the way
         moved, errors = {}, {}
         for provider, mids in ids.items():
             try:
@@ -122,7 +128,8 @@ class Services:
             with self.db.tx() as tx:
                 for sid in want:
                     tx.execute("UPDATE msg_senders SET status='removed' WHERE user_id=? AND platform='email' AND sender_id=?", (user_id, sid))
-        return {"moved": sum(moved.values()), "by_mailbox": moved, "senders": len(want), "to": to, "errors": errors}
+        return {"moved": sum(moved.values()), "by_mailbox": moved, "senders": len(in_inbox) if moved else 0,
+                "already_in_spam": len(in_spam - in_inbox), "to": to, "errors": errors}
 
     def refresh_licenses(self) -> int:
         """Once a day, fetch renewed Protect licenses from the store (desktop copies)."""
