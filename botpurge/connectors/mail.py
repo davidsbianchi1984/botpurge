@@ -1,4 +1,4 @@
-"""Live inbox connections: Gmail and Outlook, read-only.
+"""Live inbox connections: Gmail, Outlook and Yahoo Mail, read-only.
 
 Both use OAuth 2.0 with PKCE, so Bot Purge never sees the email password, and
 both ask only for read access:
@@ -10,6 +10,9 @@ both ask only for read access:
 * Outlook / Microsoft 365: ``Mail.Read offline_access`` through Microsoft
   Graph, from an app registered in Microsoft Entra (publisher verification
   recommended).
+* Yahoo Mail: ``mail-r`` (read-only) from an app registered at
+  developer.yahoo.com, then the inbox is read over Yahoo's IMAP with the same
+  OAuth token (XOAUTH2). Yahoo grants the Mail scope to approved apps only.
 
 Each sync fetches the last 30 days of the inbox as raw MIME and hands it to
 the same email scanner as uploaded mailbox exports, so every email rule
@@ -18,6 +21,7 @@ the same email scanner as uploaded mailbox exports, so every email rule
 from __future__ import annotations
 
 import base64
+import imaplib
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 from urllib.parse import urlencode
@@ -41,7 +45,17 @@ PROVIDERS = {
         "client_env": "MS_CLIENT_ID", "secret_env": "MS_CLIENT_SECRET",
         "extra": {"response_mode": "query"},
     },
+    "yahoo": {
+        "name": "Yahoo Mail",
+        "authorize": "https://api.login.yahoo.com/oauth2/request_auth",
+        "token": "https://api.login.yahoo.com/oauth2/get_token",
+        "scope": "openid email mail-r",
+        "client_env": "YAHOO_CLIENT_ID", "secret_env": "YAHOO_CLIENT_SECRET",
+        "extra": {},
+    },
 }
+YAHOO_USERINFO = "https://api.login.yahoo.com/openid/v1/userinfo"
+YAHOO_IMAP = "imap.mail.yahoo.com"
 GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
 GRAPH = "https://graph.microsoft.com/v1.0/me"
 
@@ -122,4 +136,32 @@ def fetch_outlook(token: str, days: int = 30, limit: int = 300, http: Optional[h
     return [_get(http, f"{GRAPH}/messages/{mid}/$value", token).content for mid in ids[:limit]]
 
 
-FETCHERS: dict[str, Callable[..., list[bytes]]] = {"gmail": fetch_gmail, "outlook": fetch_outlook}
+def fetch_yahoo(token: str, days: int = 30, limit: int = 300, http: Optional[httpx.Client] = None,
+                imap: Optional[Callable[[], imaplib.IMAP4]] = None) -> list[bytes]:
+    http = http or httpx.Client(timeout=30)
+    email = _get(http, YAHOO_USERINFO, token).json().get("email")
+    if not email:
+        raise MailError("Yahoo didn't share the mailbox address. Reconnect Yahoo Mail")
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%d-%b-%Y")
+    box = (imap or (lambda: imaplib.IMAP4_SSL(YAHOO_IMAP, 993, timeout=30)))()
+    try:
+        try:
+            box.authenticate("XOAUTH2", lambda _: f"user={email}\x01auth=Bearer {token}\x01\x01".encode())
+        except imaplib.IMAP4.error:
+            raise MailError("The mailbox connection expired. Reconnect it")
+        box.select("INBOX", readonly=True)                 # read-only: nothing is marked read or changed
+        _, data = box.search(None, "SINCE", since)
+        ids = (data[0] or b"").split()[-limit:]
+        out = []
+        for mid in ids:
+            _, parts = box.fetch(mid, "(BODY.PEEK[])")
+            out += [p[1] for p in parts if isinstance(p, tuple)]
+        return out
+    finally:
+        try:
+            box.logout()
+        except Exception:
+            pass
+
+
+FETCHERS: dict[str, Callable[..., list[bytes]]] = {"gmail": fetch_gmail, "outlook": fetch_outlook, "yahoo": fetch_yahoo}

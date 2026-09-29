@@ -72,7 +72,7 @@ Detection judges **behaviour, never opinions**. A flood of copy-pasted lines get
   - scam pressure, links that go somewhere other than they say
   - abused free hosting, dangerous attachments, HTML smuggling
   - callback-phishing invoices, sextortion bitcoin demands, gift-card requests
-- **Live inboxes:** connect Gmail or Outlook, read-only. Protect checks the last 30 days of mail every day with all the email rules.
+- **Live inboxes:** connect Gmail, Outlook or Yahoo Mail, read-only. Protect checks the last 30 days of mail every day with all the email rules.
 - **Connected apps:** follower-growth, auto-like, "who viewed my profile", crypto-giveaway and DM-access apps holding access to your accounts, with the steps to revoke each.
 - **Evasion:** before any rule runs, text is normalised. Lookalike letters, zero-width characters, split links ("site . com") and stacked accents are undone, and hiding tricks count as evidence in themselves.
 
@@ -188,7 +188,7 @@ pyinstaller packaging/botpurge.spec   # build the desktop app locally
 | `BOTPURGE_DB`, `BOTPURGE_KEYFILE` / `BOTPURGE_SECRET` | Database path; the key that encrypts stored tokens and signs appeal links |
 | `BOTPURGE_ADMIN_TOKEN` | Moderation of community instructions, creating purge-console tenants, `/api/admin/metrics` |
 | `X_CLIENT_ID`, `X_REDIRECT_URI` | X OAuth app for one-click removal |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID` / `MS_CLIENT_SECRET` | Gmail and Outlook read-only connections |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID` / `MS_CLIENT_SECRET`, `YAHOO_CLIENT_ID` / `YAHOO_CLIENT_SECRET` | Gmail, Outlook and Yahoo Mail read-only connections |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `BOTPURGE_LICENSE_PRIVATE`, `BOTPURGE_PUBLIC_URL` | The store (see Payments) |
 | `BOTPURGE_STORE_URL`, `BOTPURGE_LICENSE_PUBLIC` | Where a desktop copy buys and checks keys (release builds bake these in) |
 | `BOTPURGE_AGENT_BROWSER` | Force the agent's browser (`chrome`, `msedge`) |
@@ -206,7 +206,7 @@ These gates run on synthetic and collected examples. Before launch, measure on r
 
 - **Thin exports:** Instagram, Facebook, TikTok and LinkedIn exports hold only names or handles and dates, so most bots there reach *Suspicious* (shown for review) rather than being pre-selected.
 - **Terms of service:** automated clicking (the done-for-you agent, and Live Guard on TikTok/Instagram) is against those platforms' terms. It is opt-in with explicit consent, human-paced and self-stopping, but it cannot be made risk-free. Get a legal review before selling it.
-- **Gmail** read access is a Google "restricted scope": until the Google Cloud app passes Google's verification, only test users you add can connect. Outlook needs an app registered in Microsoft Entra.
+- **Gmail** read access is a Google "restricted scope": until the Google Cloud app passes Google's verification, only test users you add can connect. Outlook needs an app registered in Microsoft Entra. Yahoo Mail needs an app at developer.yahoo.com with the Mail read (`mail-r`) permission, which Yahoo approves per app.
 - **Phones** get the installable web app, not App Store builds. Phone apps can't read other apps' followers or messages anyway, so scans still come from data exports.
 
 ## Launch checklist
@@ -218,3 +218,7 @@ These gates run on synthetic and collected examples. Before launch, measure on r
 5. **Downloads:** make the repository public, or mirror the releases, so the download links work for customers.
 6. **Legal:** have a lawyer review the terms, privacy policy and the done-for-you agent (platform terms of service).
 7. **Launch:** set `BOTPURGE_BETA=0` on the store when the beta ends, then push the `v1.0.0` tag.
+
+## License
+
+Copyright (c) 2026 David Bianchi. No one may use, copy, modify or distribute this software until it is signed off on paper by David Bianchi, and any other party must be notarized. See [LICENSE](LICENSE).

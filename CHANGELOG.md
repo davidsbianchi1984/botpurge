@@ -4,7 +4,7 @@
 
 - **Scan:** friends, followers and following on X, Facebook, Instagram, TikTok and LinkedIn, with antivirus-style threat counts and plain-language reasons.
 - **Choose what to do:** remove, block or report, with one-click (X), assisted, guided or done-for-you modes, and an undo log.
-- **Messages:** DMs, comments, live chat, texts (Android and iPhone) and email, plus live Gmail and Outlook connections (read-only).
+- **Messages:** DMs, comments, live chat, texts (Android and iPhone) and email, plus live Gmail, Outlook and Yahoo Mail connections (read-only).
 - **Connected apps:** risky follower-growth, auto-like and "who viewed my profile" apps.
 - **Canary traps:** expose AI comment bots.
 - **Live Guard:** removes bots from live chats as they appear (Twitch and YouTube APIs; moderator account elsewhere).
