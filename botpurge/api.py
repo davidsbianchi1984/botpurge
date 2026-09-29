@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -29,7 +29,7 @@ from .importers import EXPORT_HELP, ImportError_, detect_platform, import_export
 from .instructions_store import InstructionStore
 from .models import Platform
 from .agent.runner import AgentService
-from .apps import import_apps
+from .apps import import_apps, import_app_names
 from . import __version__
 from .billing import Billing, BillingError
 from .release import check_for_update, store_url
@@ -809,10 +809,13 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     # Connected apps
     @app.post("/api/apps/import/{platform}")
-    async def apps_import(platform: str, file: UploadFile = File(...), uid: str = Depends(user)):
-        data = await file.read()
+    async def apps_import(platform: str, file: Optional[UploadFile] = File(None), names: str = Form(""), uid: str = Depends(user)):
+        """A connected-apps file from a data export, or the app names typed one per line."""
         try:
-            found = import_apps(platform, file.filename or "upload", data)
+            if file is not None and file.filename:
+                found = import_apps(platform, file.filename, await file.read())
+            else:
+                found = import_app_names(platform, names)
         except ImportError_ as exc:
             raise HTTPException(400, str(exc))
         return svc.apps.store(uid, found)
@@ -1076,6 +1079,27 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
                     "note": "Signed in with your saved sign-in." if ok else "Couldn't finish signing in. Finish it in the window, then close it."}
         page.goto(LOGIN_URLS[platform])
         return {"opened": LOGIN_URLS[platform], "note": "Sign in in the window that opened, then close it."}
+
+    @app.post("/api/agent/apps/{platform}")
+    def agent_read_apps(platform: str, uid: str = Depends(user)):
+        """The agent opens the platform's app-permissions page and reads the list; the person confirms it before scoring."""
+        from .agent import apps as agent_apps
+
+        svc.plans.require(uid, "agent")
+        if platform not in agent_apps.APP_PAGES:
+            raise HTTPException(400, "unknown platform")
+        if not svc.agent.has_consent(uid, platform):
+            raise PermissionError(f"Consent for the agent on {platform} is needed first")
+        pw, ctx = _agent_browser()
+        try:
+            from .agent.cockpit import Cockpit
+
+            cockpit = Cockpit(ctx).install()
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            return agent_apps.read_apps(page, platform, _saved_signin(uid, platform), cockpit)
+        finally:
+            ctx.close()
+            pw.stop()
 
     @app.post("/api/removals/{job_id}/agent/run")
     def agent_run(job_id: str, uid: str = Depends(user)):

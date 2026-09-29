@@ -158,14 +158,47 @@ def parse_apps_csv(text: str, platform: str) -> list[ConnectedApp]:
     return out
 
 
+# Where the platform shows the list, for people whose export doesn't include it.
+WHERE_TO_LOOK = {
+    "tiktok": "TikTok's data export doesn't list connected apps. Open TikTok > Settings and privacy > Security > Manage app permissions, then type the app names here, one per line.",
+    "x": "Open X > Settings > Security and account access > Apps and sessions > Connected apps, then type the app names here, one per line.",
+    "facebook": "Open Facebook > Settings > Apps and websites, then type the app names here, one per line.",
+    "instagram": "Open Instagram > Settings > Website permissions > Apps and websites, then type the app names here, one per line.",
+}
+NO_APPS_IN_EXPORT = {"tiktok"}          # exports that never carry the list, so don't ask for a file
+
+
+def parse_app_names(text: str, platform: str) -> list[ConnectedApp]:
+    """Names typed or pasted one per line (optionally 'Name - permission, permission')."""
+    out = []
+    for line in text.splitlines():
+        line = line.strip(" \t-•*")
+        if not line:
+            continue
+        name, _, perms = line.partition(" - ")
+        out.append(ConnectedApp(platform=platform, name=name.strip(),
+                                permissions=[p.strip() for p in re.split(r"[|,;]\s*", perms) if p.strip()]))
+    return out
+
+
+def import_app_names(platform: str, text: str) -> list[ConnectedApp]:
+    out = parse_app_names(text, platform)
+    if not out:
+        raise ImportError_("Type at least one app name")
+    return out
+
+
 def import_apps(platform: str, filename: str, data: bytes) -> list[ConnectedApp]:
     files = []
     if data[:2] == b"PK":
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             for info in zf.infolist():
                 n = info.filename.lower()
-                if re.search(r"(connected-application\.js|apps?_and_websites[^/]*\.json|connected_apps[^/]*\.json|installed_apps[^/]*\.json)$", n):
+                if re.search(r"(connected-application\.js|apps?_and_websites[^/]*\.json|connected_apps[^/]*\.json|installed_apps[^/]*\.json)$", n) \
+                        or (re.search(r"app", n) and re.search(r"permission|connected|websites", n) and n.endswith((".json", ".js", ".csv"))):
                     files.append((info.filename, zf.read(info)))
+        if not files:
+            raise ImportError_("That export has no connected-apps file. " + WHERE_TO_LOOK.get(platform, "Type the app names here, one per line."))
     else:
         files.append((filename, data))
     out: list[ConnectedApp] = []
@@ -176,10 +209,12 @@ def import_apps(platform: str, filename: str, data: bytes) -> list[ConnectedApp]
                 out += parse_apps_csv(t, platform)
             elif platform == "x" or "connected-application" in name:
                 out += parse_x_connected(t)
-            else:
+            elif t.lstrip().startswith(("{", "[")):
                 out += parse_meta_apps(platform, json.loads(t))
+            else:                                    # a plain list of names, one per line
+                out += parse_app_names(t, platform)
     except (ValueError, KeyError, TypeError) as exc:
         raise ImportError_(f"Could not read connected apps from that file: {exc}") from exc
     if not out:
-        raise ImportError_("No connected apps were found in that file")
+        raise ImportError_("No connected apps were found in that file. " + WHERE_TO_LOOK.get(platform, ""))
     return out

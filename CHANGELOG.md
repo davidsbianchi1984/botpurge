@@ -2,6 +2,10 @@
 
 ## 1.1.0
 
+- **Connected apps:** type the app names from your settings when your export doesn't include them (TikTok's never does), or let the agent read them: it opens the app-permissions page in its window, signs in the way you chose (saved sign-in or hand-over), and shows what it found for you to confirm. The upload says where to find the list instead of "nothing found".
+
+## 1.1.0
+
 - **More bot tells:** random-letter names, names never set ("user45418458969"), and profile photos that show a person but hide the face. The dashboard now says "bots found".
 
 - **Uploads as downloaded:** upload the export .zip (or file) without unzipping or picking the network; Bot Purge works out which network or message type it is. Drag and drop onto the upload boxes. Picking it yourself still works.

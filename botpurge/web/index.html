@@ -292,9 +292,13 @@
       </div>
       <div class="panel">
         <h2>Connected apps</h2>
-        <p class="small muted">Follower-growth, auto-like and "who viewed my profile" apps are bots acting through <em>your</em> account. Upload the connected-apps file from your data export: X <code>connected-application.js</code>, or Facebook/Instagram "Apps and websites".</p>
-        <div class="row"><select id="aPlatform"><option value="x">X</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok (CSV)</option></select>
-          <input type="file" id="aFile" accept=".js,.json,.csv,.zip"><button class="primary" id="aGo">Check apps</button></div>
+        <p class="small muted">Follower-growth, auto-like and "who viewed my profile" apps are bots acting through <em>your</em> account. Upload the connected-apps file from your data export (X <code>connected-application.js</code>, Facebook/Instagram "Apps and websites"), or type the app names from your settings, one per line.</p>
+        <div class="row"><select id="aPlatform"><option value="x">X</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option></select>
+          <input type="file" id="aFile" accept=".js,.json,.csv,.zip,.txt"></div>
+        <p class="small muted" id="aWhere">Where to find the list: X &gt; Settings &gt; Security and account access &gt; Apps and sessions &gt; Connected apps.</p>
+        <textarea id="aNames" rows="3" placeholder="Or type the app names here, one per line"></textarea>
+        <div class="row"><button class="primary" id="aGo">Check apps</button><button id="aAgent" title="Desktop app: the agent opens the settings page in its window, signs in the way you chose, and reads the list for you to confirm">Let the agent read it</button></div>
+        <div id="aPick" class="hidden" style="margin-top:8px"></div>
         <div id="aList" style="margin-top:10px"></div>
       </div>
       <div class="panel">
@@ -627,10 +631,35 @@ async function loadInbox() {
     await api("/api/inbox/status", { method: "POST", headers: auth(), body: { platform: p, sender_id: id, status: "active" } }); loadInbox(); });
   loadCanaries(); loadApps();
 }
+const APP_LIST_WHERE = {
+  x: "X > Settings > Security and account access > Apps and sessions > Connected apps.",
+  facebook: "Facebook > Settings > Apps and websites.",
+  instagram: "Instagram > Settings > Website permissions > Apps and websites.",
+  tiktok: "TikTok > Settings and privacy > Security > Manage app permissions. TikTok's data export doesn't include this list, so type the names.",
+};
+$("aPlatform").onchange = () => { $("aWhere").textContent = "Where to find the list: " + APP_LIST_WHERE[$("aPlatform").value]; };
+$("aAgent").onclick = async () => {
+  const p = $("aPlatform").value;
+  try {
+    const c = await api(`/api/agent/consent/${p}`, { headers: auth() });
+    if (!c.consented) { if (!confirm(c.text)) return; await api(`/api/agent/consent/${p}`, { method: "POST", headers: auth() }); }
+    toast("The agent is opening the settings page in its window…");
+    const r = await api(`/api/agent/apps/${p}`, { method: "POST", headers: auth() });
+    const row = (n, on) => `<label class="small" style="display:block"><input type="checkbox" data-pick value="${esc(n)}" ${on ? "checked" : ""}> ${esc(n)}</label>`;
+    $("aPick").innerHTML = (r.names.length || r.candidates.length)
+      ? `<p class="small muted">Tick the ones that are apps, then check them.</p>${r.names.map(n => row(n, true)).join("")}
+         ${r.candidates.length ? `<details class="small"><summary>Other text on the page (${r.candidates.length})</summary>${r.candidates.map(n => row(n, false)).join("")}</details>` : ""}
+         <div class="row" style="margin-top:6px"><button class="primary" id="aPickGo">Check ticked apps</button></div>`
+      : `<p class="small muted">The agent didn't find a list on that page. Type the names above instead.</p>`;
+    $("aPick").classList.remove("hidden");
+    if ($("aPickGo")) $("aPickGo").onclick = () => { $("aNames").value = [...document.querySelectorAll("[data-pick]:checked")].map(i => i.value).join("\n"); $("aPick").classList.add("hidden"); $("aGo").click(); };
+  } catch (e) { paywalled(e); }
+};
 $("aGo").onclick = async () => {
-  const f = $("aFile").files[0]; if (!f) return toast("Choose the file first");
-  const fd = new FormData(); fd.append("file", f);
-  try { const r = await api(`/api/apps/import/${$("aPlatform").value}`, { method: "POST", form: fd, headers: auth() }); toast(`Checked ${r.apps} apps`); loadApps(); } catch (e) { paywalled(e); }
+  const f = $("aFile").files[0], names = $("aNames").value.trim();
+  if (!f && !names) return toast("Choose the file or type the app names first");
+  const fd = new FormData(); if (f) fd.append("file", f); else fd.append("names", names);
+  try { const r = await api(`/api/apps/import/${$("aPlatform").value}`, { method: "POST", form: fd, headers: auth() }); toast(`Checked ${r.apps} apps`); $("aNames").value = ""; loadApps(); } catch (e) { paywalled(e); }
 };
 async function loadApps() {
   const apps = await api("/api/apps", { headers: auth() });
