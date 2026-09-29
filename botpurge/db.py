@@ -266,12 +266,13 @@ CREATE TABLE IF NOT EXISTS secrets (
     PRIMARY KEY (user_id, name)
 );
 
-CREATE TABLE IF NOT EXISTS mail_links (           -- live inbox connections (Gmail, Outlook), read-only
+CREATE TABLE IF NOT EXISTS mail_links (           -- live inbox connections (Gmail, Outlook, Yahoo Mail)
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider TEXT NOT NULL,
     connected_at TEXT NOT NULL,
     last_sync TEXT,
     last_error TEXT,
+    can_clean INTEGER NOT NULL DEFAULT 0,           -- the person also allowed moving flagged mail to Trash / Spam
     PRIMARY KEY (user_id, provider)
 );
 
@@ -443,6 +444,9 @@ class DB:
         lcols = {r["name"] for r in self.conn.execute("PRAGMA table_info(lg_sessions)")}
         if "checked" not in lcols:
             self.conn.execute("ALTER TABLE lg_sessions ADD COLUMN checked INTEGER NOT NULL DEFAULT 0")
+        mcols = {r["name"] for r in self.conn.execute("PRAGMA table_info(mail_links)")}
+        if "can_clean" not in mcols:
+            self.conn.execute("ALTER TABLE mail_links ADD COLUMN can_clean INTEGER NOT NULL DEFAULT 0")
         ucols = {r["name"] for r in self.conn.execute("PRAGMA table_info(users)")}
         for col, ddl in (("plan", "TEXT NOT NULL DEFAULT 'free'"), ("plan_activated_at", "TEXT"), ("plan_renews_at", "TEXT"),
                          ("license_id", "TEXT"), ("license_key", "TEXT")):

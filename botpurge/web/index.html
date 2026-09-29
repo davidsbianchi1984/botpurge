@@ -266,8 +266,9 @@
           Android texts: the free "SMS Backup &amp; Restore" app → back up → upload the .xml. iPhone texts: back up to your computer (Finder/iTunes), then upload <code>sms.db</code> (the desktop app finds it for you).</p>
         <div class="row"><button id="iphoneScan">Scan texts from my iPhone backup</button><span class="small muted">Desktop app: finds the backup on this computer for you.</span></div>
         <h3>Connect your inbox</h3>
-        <p class="small muted">Read-only: Bot Purge can read your mail to find scams but can never send, delete or change anything. Protect checks it every day.</p>
-        <div class="row" id="mailLinks"></div>
+        <p class="small muted">Read-only by default: Bot Purge reads your Inbox and Spam folders to find scams but can't send, delete or change anything. Protect checks them every day.</p>
+        <label class="small"><input type="checkbox" id="mClean"> Also allow cleanup: move the scam and spam emails Bot Purge flags to Trash, only when I press the button (never deleted for good)</label>
+        <div class="row" id="mailLinks" style="margin-top:6px"></div>
         <h3>Paste comments or live chat</h3>
         <p class="small muted">Data exports don't include comments on your posts or live chat. Copy them from the app and paste them here, one per line as <code>handle: message</code>.</p>
         <div class="row">
@@ -280,7 +281,9 @@
       </div>
       <div class="panel">
         <div class="row"><h2 style="margin:0">Flagged senders</h2><span style="flex:1"></span>
+          <button class="small primary hidden" id="mCleanAll">🗑️ Move all flagged email to Trash</button>
           <select id="sTab"><option value="flagged">Flagged</option><option value="whitelisted">Real people</option><option value="removed">Blocked / removed</option><option value="all">Everyone</option></select></div>
+        <p class="notice small hidden" id="mCleanResult"></p>
         <div class="table-wrap"><table class="stack"><thead><tr><th>Sender</th><th>Score</th><th>Why</th><th class="hide-sm">Messages</th><th></th></tr></thead><tbody id="sRows"></tbody></table></div>
         <div id="sDetail"></div>
       </div>
@@ -530,11 +533,11 @@ $("sTab").onchange = loadInbox;
 async function loadMail() {
   const links = await api("/api/mail", { headers: auth() });
   $("mailLinks").innerHTML = links.map(l => l.connected
-    ? `<span class="chip good">${esc(l.name)} connected${l.last_sync ? " · checked " + fmtDate(l.last_sync) : ""}</span>${l.last_error ? `<span class="chip bad" title="${esc(l.last_error)}">needs attention</span>` : ""}
+    ? `<span class="chip good">${esc(l.name)} connected${l.can_clean ? " · cleanup on" : ""}${l.last_sync ? " · checked " + fmtDate(l.last_sync) : ""}</span>${l.last_error ? `<span class="chip bad" title="${esc(l.last_error)}">needs attention</span>` : ""}
        <button class="small" data-msync="${l.provider}">Check now</button><button class="small link" data-moff="${l.provider}">Disconnect</button>`
     : `<button data-mon="${l.provider}" ${l.available ? "" : "disabled title='Not set up in this copy yet'"}>Connect ${esc(l.name)}</button>`).join("");
   document.querySelectorAll("[data-mon]").forEach(b => b.onclick = async () => {
-    try { const r = await api(`/api/mail/${b.dataset.mon}/connect`, { method: "POST", headers: auth() });
+    try { const r = await api(`/api/mail/${b.dataset.mon}/connect${$("mClean").checked ? "?cleanup=true" : ""}`, { method: "POST", headers: auth() });
       window.open(r.authorize_url, "_blank", "noopener"); toast("Finish signing in in your browser, then come back here.", 6000);
       window.addEventListener("focus", () => { loadMail(); loadInbox(); }, { once: true }); }
     catch (e) { paywalled(e); }
@@ -544,7 +547,24 @@ async function loadMail() {
     catch (e) { paywalled(e); }
   });
   document.querySelectorAll("[data-moff]").forEach(b => b.onclick = async () => { await api(`/api/mail/${b.dataset.moff}`, { method: "DELETE", headers: auth() }); loadMail(); });
+  state.canClean = links.some(l => l.connected && l.can_clean);
+  $("mCleanAll").classList.toggle("hidden", !state.canClean);
 }
+// Move every flagged sender's email to Trash: the first press asks, the second does it.
+$("mCleanAll").onclick = async () => {
+  const b = $("mCleanAll");
+  if (!b.dataset.sure) {
+    const n = (await api("/api/inbox/senders?tab=flagged", { headers: auth() })).filter(r => r.platform === "email").length;
+    b.dataset.sure = "1"; b.textContent = `Yes, move email from ${n} flagged senders to Trash`;
+    setTimeout(() => { delete b.dataset.sure; b.textContent = "🗑️ Move all flagged email to Trash"; }, 8000); return;
+  }
+  delete b.dataset.sure; b.disabled = true;
+  try { const r = await api("/api/mail/clean", { method: "POST", headers: auth(), body: { to: "trash" } });
+    toast(`Moved ${r.moved} emails from ${r.senders} senders to Trash. You can undo it in your mailbox.`, 6000);
+    $("mCleanResult").textContent = `✅ Moved ${r.moved} scam and spam emails from ${r.senders} senders to Trash.`; $("mCleanResult").classList.remove("hidden");
+    loadInbox(); } catch (e) { paywalled(e); }
+  finally { b.disabled = false; b.textContent = "🗑️ Move all flagged email to Trash"; }
+};
 async function loadInbox() {
   const rows = await api(`/api/inbox/senders?tab=${$("sTab").value}`, { headers: auth() });
   $("sRows").innerHTML = rows.map(r => {
@@ -1090,6 +1110,13 @@ $("acSend").onclick = async () => {
     $("acText").value = ""; state.agentPrefs = r.prefs; $("acPrefs").textContent = prefsLine(r.prefs);
     const h = await api("/api/agent/chat", { headers: auth() }); renderChat(h.messages);
     if (r.changes.some(c => c.startsWith("Saved your steps"))) { state.chatCtx = null; $("acCtx").classList.add("hidden"); }
+    const sc = r.prefs.scope;                          // "only scan my TikTok followers": Flagged accounts opens on that
+    if (sc && r.changes.some(c => c.startsWith("Scanning only"))) {
+      if (sc.platforms && sc.platforms.length === 1) state.platform = sc.platforms[0];
+      if (sc.directions && sc.directions.length === 1) { state.dir = sc.directions[0]; document.querySelectorAll("#fDir button").forEach(x => x.classList.toggle("on", x.dataset.dir === state.dir)); }
+      $("acLog").insertAdjacentHTML("beforeend", `<div class="msg agent"><button class="small primary" id="acReview">Review and remove them</button></div>`);
+      $("acReview").onclick = () => switchTab("flags");
+    }
   } catch (e) { paywalled(e); } finally { $("acSend").disabled = false; }
 };
 $("acText").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("acSend").click(); } });

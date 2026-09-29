@@ -116,3 +116,16 @@ def test_teaching_live_moderation_needs_the_live_and_a_chatter(client, user):
     r = client.post("/api/agent/teach", json={**base, "start_url": "https://www.tiktok.com/@me/live"}, headers=hdr(user))
     assert r.status_code == 400 and "chatter" in r.json()["detail"]
     assert client.post("/api/agent/teach", json={"platform": "linkedin", "action": "live_ban"}, headers=hdr(user)).status_code == 400
+
+
+def test_scan_scope_in_plain_words(client, user, svc):
+    net = ev.seeded_network(n_real=120, n_bots=20, n_clones=3, n_following_bad=5, platform=Platform.tiktok, seed=5)
+    svc.personal.store_connections(user["_id"], Platform.tiktok, net.conns)
+    fb = ev.seeded_network(n_real=60, n_bots=8, n_clones=1, n_following_bad=2, platform=Platform.facebook, seed=6)
+    svc.personal.store_connections(user["_id"], Platform.facebook, fb.conns)
+    r = say(client, user, "Only scan my followers on TikTok for bots, spam and fraud accounts")
+    assert r["prefs"]["scope"] == {"platforms": ["tiktok"], "directions": ["follower"], "kinds": ["bots", "spam", "fraud"]}
+    assert r["reply"].startswith("Scanning only your TikTok followers for bots, spam and fraud accounts: checked ")
+    checked = svc.db.one("SELECT COUNT(*) n FROM flags WHERE user_id=? AND platform='tiktok' AND direction='follower'", (user["_id"],))["n"]
+    assert f"checked {checked}," in r["reply"] and checked > 0
+    assert "scanning your TikTok followers" in say(client, user, "what are my settings?")["reply"]

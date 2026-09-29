@@ -30,6 +30,17 @@ ACTION_WORDS = [(r"remove (a |the |my )?followers?|remove them as a follower", "
                 (r"unfriend", "unfriend"), (r"\bban\b", "live_ban"), (r"\b(mute|time ?out)\b", "live_timeout"),
                 (r"delete (a |the |their )?(comment|message)", "live_delete"), (r"\bblock\b", "block"), (r"\breport\b", "report")]
 LIVE_KEYS = {"mode", "no_politics", "no_abuse", "blocked_phrases"}
+KINDS = {"bots": "bots", "spam": "spam", "fraud": "fraud", "fakes": "fake"}
+NAMES = {"tiktok": "TikTok", "instagram": "Instagram", "facebook": "Facebook", "linkedin": "LinkedIn", "x": "X"}
+LISTS = {"follower": "followers", "following": "the accounts you follow", "friend": "friends"}
+
+
+def scope_words(scope: dict) -> str:
+    plats = " and ".join(NAMES.get(p, p) for p in scope.get("platforms") or []) or "all your networks"
+    lists = " and ".join(LISTS[d] for d in scope.get("directions") or []) or "followers, following and friends"
+    kinds = scope.get("kinds") or list(KINDS)
+    kw = ", ".join(KINDS[k] for k in kinds[:-1]) + (" and " if len(kinds) > 1 else "") + KINDS[kinds[-1]]
+    return (f"your {plats} {lists} for {kw} accounts" if scope.get("platforms") else f"{lists} on {plats} for {kw} accounts")
 
 
 def teachable(platform: str) -> tuple:
@@ -130,12 +141,37 @@ class Toolbox:
         self.svc.instructions.submit(self.uid, platform, "web", action, lines)
         return self._did(f"Saved your steps to {action.replace('_', ' ')} on {platform.title()} ({len(lines)} steps). The agent follows them from now on")
 
+    def scan_scope(self, platforms: Optional[list] = None, directions: Optional[list] = None, kinds: Optional[list] = None) -> str:
+        """Remember what to scan (which networks, which lists, what to look for), then scan it now."""
+        plats = [p for p in (platforms or []) if p in PLATFORM_ACTIONS] or None
+        dirs = [d for d in (directions or []) if d in ("follower", "following", "friend")] or None
+        kinds = [k for k in (kinds or []) if k in KINDS] or list(KINDS)
+        p = self.prefs(); p["scope"] = {"platforms": plats, "directions": dirs, "kinds": kinds}; self._save(p)
+        for plat in plats or [None]:
+            try:
+                self.svc.personal.scan(self.uid, plat)
+            except ValueError:
+                return self._did("Scope saved: " + scope_words(p["scope"]) + ". Upload that export and I'll scan it")
+        where, args = "user_id=?", [self.uid]
+        if plats:
+            where += f" AND platform IN ({','.join('?' * len(plats))})"; args += plats
+        if dirs:
+            where += f" AND direction IN ({','.join('?' * len(dirs))})"; args += dirs
+        checked = self.svc.db.one(f"SELECT COUNT(*) n FROM flags WHERE {where}", args)["n"]
+        by = {r["label"]: r["n"] for r in self.svc.db.q(
+            f"SELECT label, COUNT(*) n FROM flags WHERE {where} AND status='active' GROUP BY label", args)}
+        bots, sus = by.get("likely_bot", 0), by.get("suspicious", 0)
+        return self._did(f"Scanning only {scope_words(p['scope'])}: checked {checked}, found {bots + sus} "
+                         f"({bots} likely bots or fakes, {sus} suspicious). They're under Flagged accounts, ready to remove")
+
     def show_settings(self) -> str:
         p = self.prefs()
         live = p.get("live") or {}
         parts = [f"pace {p['pace']}", f"up to {p['max_per_run']} per run", "default: " + ", ".join(p["default_actions"])]
         if p["objectives"]:
             parts.append("objectives: " + "; ".join(p["objectives"]))
+        if p.get("scope"):
+            parts.append("scanning " + scope_words(p["scope"]))
         if live:
             parts.append("live chat: " + ", ".join(f"{k.replace('_', ' ')}={v}" for k, v in live.items()))
         own = [f"{s['platform']} {s['action'].replace('_', ' ')}" for s in self.svc.instructions.list(user_id=self.uid)
@@ -193,6 +229,17 @@ def interpret(tb: Toolbox, text: str, context: Optional[dict] = None) -> list[st
             run(tb.save_directions, platform, action, lines)
             return out
         out.append("Which platform and action are these steps for? For example: “On TikTok, to block: click \"Share\", then click \"Block\".”")
+        return out
+
+    if re.search(r"\b(scan|check|look (through|at)|go through|search)\b", low) and re.search(
+            r"\b(followers?|following|friends?|bots?|spam\w*|fraud\w*|scam\w*|fakes?)\b", low):
+        plats = sorted({p for w, p in PLATFORMS.items() if re.search(rf"\b{re.escape(w)}\b", low) and w != "x"}
+                       | ({"x"} if re.search(r"\bon x\b|\btwitter\b", low) else set()))
+        dirs = [d for d, rx in (("follower", r"\bfollowers?\b"), ("following", r"\b(following|people i follow|accounts i follow)\b"),
+                                ("friend", r"\bfriends?\b")) if re.search(rx, low)]
+        kinds = [k for k, rx in (("bots", r"\bbots?\b"), ("spam", r"\bspam\w*"), ("fraud", r"\b(fraud\w*|scam\w*)"),
+                                 ("fakes", r"\bfakes?\b|\bfake accounts?\b")) if re.search(rx, low)]
+        run(tb.scan_scope, plats, dirs, kinds)
         return out
 
     if re.search(r"\b(slow(er)?( down)?|go slower|gentle|take it easy|more human)\b", low):
@@ -288,6 +335,11 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"platform": {"type": "string", "enum": ["tiktok", "instagram", "facebook", "linkedin", "x", "kick"]},
                                                        "action": {"type": "string", "enum": sorted({a for p in PLATFORMS.values() for a in teachable(p)})},
                                                        "steps": {"type": "array", "items": {"type": "string"}}}, "required": ["platform", "action", "steps"]}},
+    {"name": "scan_scope", "description": "Set what to scan (networks, which lists, what to look for) and scan it now; replies with counts.",
+     "input_schema": {"type": "object", "properties": {
+         "platforms": {"type": "array", "items": {"type": "string", "enum": ["tiktok", "instagram", "facebook", "linkedin", "x"]}},
+         "directions": {"type": "array", "items": {"type": "string", "enum": ["follower", "following", "friend"]}},
+         "kinds": {"type": "array", "items": {"type": "string", "enum": ["bots", "spam", "fraud", "fakes"]}}}}},
     {"name": "show_settings", "description": "Read the agent's current settings.", "input_schema": {"type": "object", "properties": {}}},
 ]
 SYSTEM = ("You are the Bot Purge agent talking with the person you work for. You remove bots, fake accounts and scammers from their "

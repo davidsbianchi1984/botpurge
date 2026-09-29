@@ -7,6 +7,7 @@
 Run: ``python -m botpurge`` (or ``uvicorn --factory botpurge.api:create_app``).
 """
 
+import json
 import os
 import threading
 import time
@@ -68,17 +69,60 @@ class Services:
         if not rt:
             raise ValueError(f"{p['name']} isn't connected")
         try:
-            tok = mailapi.refresh(provider, rt, os.environ.get(p["client_env"], ""), os.environ.get(p["secret_env"]), http=self.x_http)
-            if tok.get("refresh_token"):
-                self.save_secret(user_id, f"mail_{provider}_refresh", tok["refresh_token"])
-            raws = mailapi.FETCHERS[provider](tok["access_token"], http=self.x_http)
+            raws = mailapi.FETCHERS[provider](self.mail_token(user_id, provider), http=self.x_http)
         except mailapi.MailError as exc:
             self.db.x("UPDATE mail_links SET last_error=? WHERE user_id=? AND provider=?", (str(exc), user_id, provider))
             raise
-        msgs = [m for m in (parse_email_bytes(r) for r in raws) if m]
+        msgs = []
+        for raw, folder in raws:
+            m = parse_email_bytes(raw)
+            if m:
+                m.headers["x-provider"], m.headers["x-folder"] = provider, folder     # where it lives, for cleanup
+                msgs.append(m)
         result = self.inbox.store(user_id, msgs) if msgs else {"messages": 0}
         self.db.x("UPDATE mail_links SET last_sync=?, last_error=NULL WHERE user_id=? AND provider=?", (sec.iso(), user_id, provider))
         return {"provider": provider, "fetched": len(raws), **result}
+
+    def mail_token(self, user_id: str, provider: str) -> str:
+        p = mailapi.PROVIDERS[provider]
+        rt = self.get_secret(user_id, f"mail_{provider}_refresh")
+        if not rt:
+            raise ValueError(f"{p['name']} isn't connected")
+        link = self.db.one("SELECT can_clean FROM mail_links WHERE user_id=? AND provider=?", (user_id, provider))
+        tok = mailapi.refresh(provider, rt, os.environ.get(p["client_env"], ""), os.environ.get(p["secret_env"]), http=self.x_http,
+                              cleanup=bool(link and link["can_clean"]))
+        if tok.get("refresh_token"):
+            self.save_secret(user_id, f"mail_{provider}_refresh", tok["refresh_token"])
+        return tok["access_token"]
+
+    def clean_mail(self, user_id: str, to: str = "trash", senders: Optional[list] = None) -> dict:
+        """Move the emails of flagged senders (or the ones picked) to Trash or Spam, in every mailbox that allows it."""
+        if to not in ("trash", "spam"):
+            raise ValueError("to must be trash or spam")
+        if senders is None:
+            senders = [r["sender_id"] for r in self.db.q(
+                "SELECT sender_id FROM msg_senders WHERE user_id=? AND platform='email' AND status='active'"
+                " AND label IN ('likely_bot','suspicious')", (user_id,))]
+        want = set(senders)
+        links = {r["provider"]: r for r in self.db.q("SELECT * FROM mail_links WHERE user_id=? AND can_clean=1", (user_id,))}
+        if not links:
+            raise ValueError("Connect a mailbox with cleanup allowed first")
+        ids: dict[str, list] = {}
+        for r in self.db.q("SELECT sender_id, extra_json FROM msg_items WHERE user_id=? AND kind='email'", (user_id,)):
+            h = (json.loads(r["extra_json"] or "{}") or {}).get("headers", {})
+            if r["sender_id"] in want and h.get("x-provider") in links and h.get("x-folder", "Inbox") == "Inbox" and h.get("Message-ID"):
+                ids.setdefault(h["x-provider"], []).append(h["Message-ID"])
+        moved, errors = {}, {}
+        for provider, mids in ids.items():
+            try:
+                moved[provider] = mailapi.CLEANERS[provider](self.mail_token(user_id, provider), mids, to, http=self.x_http)
+            except mailapi.MailError as exc:
+                errors[provider] = str(exc)
+        if moved:
+            with self.db.tx() as tx:
+                for sid in want:
+                    tx.execute("UPDATE msg_senders SET status='removed' WHERE user_id=? AND platform='email' AND sender_id=?", (user_id, sid))
+        return {"moved": sum(moved.values()), "by_mailbox": moved, "senders": len(want), "to": to, "errors": errors}
 
     def refresh_licenses(self) -> int:
         """Once a day, fetch renewed Protect licenses from the store (desktop copies)."""
@@ -467,11 +511,12 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def mail_links(uid: str = Depends(user)):
         rows = {r["provider"]: dict(r) for r in svc.db.q("SELECT * FROM mail_links WHERE user_id=?", (uid,))}
         return [{"provider": k, "name": p["name"], "available": bool(os.environ.get(p["client_env"])),
-                 "connected": k in rows, "last_sync": rows.get(k, {}).get("last_sync"), "last_error": rows.get(k, {}).get("last_error")}
+                 "connected": k in rows, "last_sync": rows.get(k, {}).get("last_sync"), "last_error": rows.get(k, {}).get("last_error"),
+                 "can_clean": bool(rows.get(k, {}).get("can_clean"))}
                 for k, p in mailapi.PROVIDERS.items()]
 
     @app.post("/api/mail/{provider}/connect")
-    def mail_connect(provider: str, request: Request, uid: str = Depends(user)):
+    def mail_connect(provider: str, request: Request, cleanup: bool = False, uid: str = Depends(user)):
         svc.plans.require(uid, "email")
         p = mailapi.PROVIDERS.get(provider)
         if not p:
@@ -480,10 +525,10 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         if not client_id:
             raise HTTPException(503, f"{p['name']} isn't set up on this copy yet (set {p['client_env']})")
         pkce = xapi.PKCE.new()
-        state = f"{provider}.{pkce.state}"
+        state = f"{provider}.{'clean' if cleanup else 'read'}.{pkce.state}"
         svc.db.x("INSERT INTO oauth_pending VALUES (?,?,?,?)", (state, uid, pkce.verifier, sec.iso()))
         redirect = os.environ.get("MAIL_REDIRECT_URI", str(request.url_for("mail_callback")))
-        return {"authorize_url": mailapi.authorize_url(provider, client_id, redirect, state, pkce.challenge)}
+        return {"authorize_url": mailapi.authorize_url(provider, client_id, redirect, state, pkce.challenge, cleanup=cleanup)}
 
     @app.get("/api/mail/callback", name="mail_callback")
     def mail_callback(request: Request, state: str, code: str = "", error: str = ""):
@@ -496,12 +541,14 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
             return _mail_done(provider, False)
         p = mailapi.PROVIDERS[provider]
         redirect = os.environ.get("MAIL_REDIRECT_URI", str(request.url_for("mail_callback")))
+        cleanup = state.split(".")[1] == "clean"
         tok = mailapi.exchange_code(provider, code, redirect, row["verifier"], os.environ[p["client_env"]],
-                                    os.environ.get(p["secret_env"]), http=svc.x_http)
+                                    os.environ.get(p["secret_env"]), http=svc.x_http, cleanup=cleanup)
         if not tok.get("refresh_token"):
             return _mail_done(provider, False)
         svc.save_secret(row["user_id"], f"mail_{provider}_refresh", tok["refresh_token"])
-        svc.db.x("INSERT OR REPLACE INTO mail_links(user_id,provider,connected_at) VALUES (?,?,?)", (row["user_id"], provider, sec.iso()))
+        svc.db.x("INSERT OR REPLACE INTO mail_links(user_id,provider,connected_at,can_clean) VALUES (?,?,?,?)",
+                 (row["user_id"], provider, sec.iso(), 1 if cleanup else 0))
         try:
             svc.sync_mail(row["user_id"], provider)
         except Exception:
@@ -523,6 +570,18 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
         if provider not in mailapi.PROVIDERS:
             raise HTTPException(404, "unknown mail provider")
         return svc.sync_mail(uid, provider)
+
+    class MailCleanIn(BaseModel):
+        to: str = "trash"                          # trash | spam; never deleted for good
+        senders: Optional[list[str]] = None        # default: every flagged email sender
+
+    @app.post("/api/mail/clean")
+    def mail_clean(body: MailCleanIn, uid: str = Depends(user)):
+        svc.plans.require(uid, "email")
+        try:
+            return svc.clean_mail(uid, body.to, body.senders)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     @app.delete("/api/mail/{provider}")
     def mail_disconnect(provider: str, uid: str = Depends(user)):

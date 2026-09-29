@@ -544,7 +544,7 @@ def _email_to_message(msg) -> Optional[Message]:
             at = at.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
         at = None
-    headers = {k: str(msg.get(k, "")) for k in ("From", "Reply-To", "Authentication-Results", "Return-Path", "List-Unsubscribe")}
+    headers = {k: str(msg.get(k, "")) for k in ("From", "Reply-To", "Authentication-Results", "Return-Path", "List-Unsubscribe", "Message-ID")}
     headers["x-attachments"] = "|".join(attachments[:50])
     headers["x-html-smuggling"] = "1" if any(h for h in rules.attachment_findings([], "".join(html_raw)) if h.code == "html_smuggling") else ""
     return Message(kind="email", platform="email", sender_id=addr.lower(), sender_name=name, sender_handle=addr.lower(),
