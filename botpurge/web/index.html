@@ -171,6 +171,16 @@
         <div id="iBest" style="margin-top:12px"></div>
       </div>
       <div class="panel">
+        <h2>Teach the agent</h2>
+        <p class="small muted">Show the done-for-you agent how you do it: a Bot Purge browser window opens, you do the steps once
+          (clicks, typing, keyboard shortcuts, menus, new windows), then press <b>Done</b> in the bar at the top. Your steps are saved
+          and the agent follows them from then on. Passwords and codes are never recorded.</p>
+        <p class="small muted">While the agent works you can watch its cursor, press <b>Take over</b> (or just click or type in its window)
+          to do something yourself, then <b>Resume</b>. If it can't find a button it asks you to click it, and remembers it next time.</p>
+        <div class="row"><button class="primary" id="teachGo">Teach the agent this action</button><span class="small muted" id="teachNote"></span></div>
+        <ol class="steps" id="teachSteps"></ol>
+      </div>
+      <div class="panel">
         <h2>Write or correct the steps</h2>
         <p class="small muted">Platforms change their menus often. Write the steps that work for you; share them and a moderator will review before anyone else sees them. Never include links to login pages or ask for passwords.</p>
         <label class="f">App version (optional)<input id="iVersion" placeholder="e.g. Instagram 352.0 for iOS"></label>
@@ -248,6 +258,15 @@
           <label class="f">Channel / live chat ID<input id="lgChannel" placeholder="your channel name"></label>
           <label class="f">Your name and your mods' names<input id="lgNames" placeholder="YourName, ModOne, ModTwo"></label>
           <label class="f">Mode<select id="lgMode"><option value="watch">Watch (log only)</option><option value="protect">Protect (act)</option></select></label>
+        </div>
+        <details class="small" style="margin:6px 0"><summary><b>Your chat rules</b> (optional)</summary>
+          <p class="small muted">Bots and scams are always caught. These rules are yours to switch on for your own chat, and they apply the same to everyone, whatever side they're on.</p>
+          <label><input type="checkbox" id="lgNoPolitics"> Keep political talk out of my chat (all sides)</label><br>
+          <label><input type="checkbox" id="lgNoAbuse"> Remove insults and personal attacks (at anyone)</label>
+          <label class="f" style="margin-top:6px">Words or phrases to remove (comma-separated; disguised spellings are caught too)
+            <input id="lgWords" placeholder="e.g. spoilers, another streamer's name"></label>
+        </details>
+        <div class="row">
           <button class="primary" id="lgStart" style="align-self:end">Start Live Guard</button>
         </div>
         <p class="small muted" id="lgHow"></p>
@@ -344,11 +363,11 @@ function switchTab(t) {
 // ---------- live guard ----------
 const LG_HOW = { twitch: "Twitch and YouTube are moderated through their official APIs once your moderator account is connected below.",
   youtube: "Twitch and YouTube are moderated through their official APIs once your moderator account is connected below.",
-  tiktok: "TikTok, Instagram, Facebook and Kick have no moderation API: add a moderator account to your live and the Bot Purge desktop agent runs it for you (Protect). You can also paste chat below to test.",
+  tiktok: "TikTok, Instagram, Facebook and Kick have no moderation API, so Bot Purge moderates like a human mod: add your Bot Purge moderator account to your live, and the desktop app watches the chat and removes scammers, spammers and bots as they post.",
   instagram: "", facebook: "", kick: "" };
 ["instagram", "facebook", "kick"].forEach(k => LG_HOW[k] = LG_HOW.tiktok);
 $("lgPlatform").onchange = () => $("lgHow").textContent = LG_HOW[$("lgPlatform").value];
-let lgTimer = null, lgCurrent = null;
+let lgTimer = null, lgCurrent = null, lgDemoRunning = false;
 async function loadLive() {
   $("lgHow").textContent = LG_HOW[$("lgPlatform").value];
   const list = await api("/api/liveguard/sessions", { headers: auth() });
@@ -361,41 +380,79 @@ async function loadLive() {
 $("lgStart").onclick = async () => {
   const names = $("lgNames").value.split(",").map(x => x.trim()).filter(Boolean);
   try {
-    const sess = await api("/api/liveguard/sessions", { method: "POST", headers: auth(), body: { platform: $("lgPlatform").value, channel: $("lgChannel").value || "My live", policy: { mode: $("lgMode").value, protected_names: names } } });
+    const words = $("lgWords").value.split(",").map(x => x.trim()).filter(Boolean);
+    const sess = await api("/api/liveguard/sessions", { method: "POST", headers: auth(), body: { platform: $("lgPlatform").value, channel: $("lgChannel").value || "My live",
+      policy: { mode: $("lgMode").value, protected_names: names, no_politics: $("lgNoPolitics").checked, no_abuse: $("lgNoAbuse").checked, blocked_phrases: words } } });
     toast("Live Guard is on"); lgCurrent = sess.id; loadLive();
   } catch (e) { paywalled(e); }
 };
 $("twSave").onclick = async () => { try { await api("/api/liveguard/credentials/twitch", { method: "PUT", headers: auth(), body: { client_id: $("twClient").value, token: $("twToken").value, login: $("twLogin").value, broadcaster_id: $("twBroad").value, moderator_id: $("twMod").value } }); toast("Twitch moderator connected"); $("twToken").value = ""; } catch (e) { paywalled(e); } };
 $("ytSave").onclick = async () => { try { await api("/api/liveguard/credentials/youtube", { method: "PUT", headers: auth(), body: { token: $("ytToken").value } }); toast("YouTube connected"); $("ytToken").value = ""; } catch (e) { paywalled(e); } };
 const ACT = { ban: "bad", timeout: "warn", delete: "warn", none: "" };
+const LG_DEMO = [
+  ["gamer_joe", "this stream is fire 🔥"], ["nana_b", "hi from Ohio!"], ["free_gift_99", "first 10 people to type WIN get $10,000 check my bio"],
+  ["mike.t", "what game is this?"], ["free_gift_98", "first 10 people to type WIN get $10,000 check my bio"],
+  ["sara_k", "lol that was close"], ["crypto_ann77", "I made $8,400 this week with my trading coach, message me on WhatsApp"],
+  ["luna_x93", "Hi dear [tearsofjoy] check my bio"], ["dave_r", "GG"]];
+const LG_ACT = { ban: "Removed", timeout: "Timed out", delete: "Deleted" };
 async function openLive(id) {
   lgCurrent = id;
   clearTimeout(lgTimer);
   if (state.tab !== "live") return;
   const x = await api(`/api/liveguard/sessions/${id}`, { headers: auth() });
   const box = $("lgSession"); box.classList.remove("hidden");
-  const typing = document.activeElement && document.activeElement.id === "lgPaste";
-  const pasted = $("lgPaste") ? $("lgPaste").value : "";
-  box.innerHTML = `<div class="row"><h2 style="margin:0">${esc(PLATFORM_NAMES[x.platform] || x.platform)} · ${esc(x.channel)}</h2><span class="chip ${x.state === "running" ? "good" : ""}">${esc(x.state)}</span>
-      <span class="chip">${x.policy.mode === "protect" ? "Protect: acting" : "Watch: logging only"}</span><span style="flex:1"></span>
-      ${x.state === "running" ? `<button id="lgToggle">${x.policy.mode === "protect" ? "Switch to Watch" : "Switch to Protect"}</button><button class="danger" id="lgStop">Stop</button>` : ""}</div>
-    <div class="cats">${["ban", "timeout", "delete"].map(a => `<div class="cat ${x.counts[a] ? "hit" : ""}"><span>${a === "ban" ? "Banned" : a === "timeout" ? "Timed out" : "Deleted"}</span><b>${x.counts[a] || 0}</b></div>`).join("")}</div>
-    ${x.state === "running" && !x.connected ? `<h3>Paste chat to check it</h3><textarea id="lgPaste" placeholder="luna_x93: first 10 people to type WIN get $10,000 check my bio"></textarea><div class="row end"><button class="primary" id="lgFeed">Check chat</button></div>` : ""}
-    <div class="table-wrap"><table class="stack"><thead><tr><th>Chatter</th><th>Said</th><th>Action</th><th>Why</th><th></th></tr></thead><tbody>
-    ${x.events.map(e => `<tr><td><b>${esc(e.author_name || e.author_id)}</b><div class="small muted">${new Date(e.at).toLocaleTimeString()}</div></td><td class="small">${esc(e.text)}</td>
-      <td><span class="chip ${ACT[e.action]}">${esc(e.action)}${e.applied ? "" : x.policy.mode === "watch" && e.action !== "none" ? " (would)" : ""}</span>${e.undone ? `<div class="small muted">undone</div>` : ""}</td>
-      <td><ul class="reasons">${e.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul></td>
-      <td>${e.action !== "none" && !e.undone ? `<button class="small" data-undo-ev="${e.id}">Undo &amp; trust</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No bots yet.</td></tr>`}</tbody></table></div>`;
-  if ($("lgPaste")) { $("lgPaste").value = pasted; if (typing) $("lgPaste").focus(); }
+  const feedEl = $("lgChat"), stick = !feedEl || feedEl.scrollTop + feedEl.clientHeight >= feedEl.scrollHeight - 30;
+  const url = $("lgUrl") ? $("lgUrl").value : "";
+  const demoOpen = !!(box.querySelector("details") && box.querySelector("details").open);   // survives the refresh
+  const byEvent = Object.fromEntries(x.events.map(e => [e.id, e]));
+  const removed = (x.counts.ban || 0) + (x.counts.timeout || 0) + (x.counts.delete || 0);
+  const agentPlatform = ["tiktok", "instagram", "facebook", "kick"].includes(x.platform);
+  const running = x.state === "running";
+  const live = x.watching || x.connected;      // connected to a real live chat (not a sample)
+  box.innerHTML = `<div class="row"><h2 style="margin:0">${esc(PLATFORM_NAMES[x.platform] || x.platform[0].toUpperCase() + x.platform.slice(1))} · ${esc(x.channel)}</h2>
+      <span class="chip ${running ? "good" : ""}">${running ? "live" : "stopped"}</span>
+      <span class="chip">${x.policy.mode === "protect" ? "Protect: removing bots" : "Watch: flagging only"}</span><span style="flex:1"></span>
+      ${running ? `<button id="lgToggle">${x.policy.mode === "protect" ? "Switch to Watch" : "Switch to Protect"}</button><button class="danger" id="lgStop">Stop</button>` : ""}</div>
+    <p class="lgstats"><b>${(x.checked || 0).toLocaleString()}</b> messages checked · <b class="${removed ? "bad" : ""}">${removed}</b> scammers, spammers and bots ${x.policy.mode === "protect" && live ? "removed" : "caught"}</p>
+    ${running && agentPlatform && !x.watching ? `<div class="row"><input id="lgUrl" placeholder="Link to your live, e.g. https://www.tiktok.com/@you/live" style="flex:1">
+        <button class="primary" id="lgWatch">Start moderating</button></div>
+        <p class="small muted">Add your Bot Purge moderator account as a moderator on your live and sign it in once (Plans → done-for-you agent). The desktop app opens your live in its own window and removes bots as they post. Watch it work, or take over any time.</p>` : ""}
+    ${x.watching ? `<p class="small"><span class="chip good">Moderating</span> in the Bot Purge window on your computer.</p>` : ""}
+    <div class="lgchat" id="lgChat">${x.chat.map(c => {
+      const e = c.event_id ? byEvent[c.event_id] : null, bad = c.action !== "none" && !(e && e.undone);
+      return `<div class="msg ${bad ? "bad" : ""}"><b>${esc(c.author_name || c.author_id)}</b> <span class="t">${esc(c.text)}</span>
+        ${bad ? `<div class="why"><span class="chip bad">${e && e.applied ? LG_ACT[c.action] : x.policy.mode === "protect" && live ? "Removing…" : "Caught"}</span>
+          ${e ? esc(e.reasons[0] || "") : ""} ${e ? `<button class="small link" data-undo-ev="${e.id}">Undo &amp; trust</button>` : ""}</div>` : ""}</div>`;
+    }).join("") || `<p class="muted small">${running ? "Waiting for chat…" : "No chat."}</p>`}</div>
+    ${running && !x.watching && !x.connected ? `<details class="small" ${demoOpen || lgDemoRunning ? "open" : ""}><summary>No live right now? Watch Live Guard moderate a sample chat</summary>
+        <button id="lgDemo" style="margin-top:8px" ${lgDemoRunning ? "disabled" : ""}>${lgDemoRunning ? "Playing…" : "Play sample chat"}</button></details>` : ""}`;
+  const chatEl = $("lgChat"); if (stick) chatEl.scrollTop = chatEl.scrollHeight;
+  if ($("lgUrl")) $("lgUrl").value = url;
   if ($("lgToggle")) $("lgToggle").onclick = async () => { await api(`/api/liveguard/sessions/${id}/mode`, { method: "POST", headers: auth(), body: { mode: x.policy.mode === "protect" ? "watch" : "protect" } }); openLive(id); };
   if ($("lgStop")) $("lgStop").onclick = async () => { await api(`/api/liveguard/sessions/${id}/stop`, { method: "POST", headers: auth() }); loadLive(); };
-  if ($("lgFeed")) $("lgFeed").onclick = async () => {
-    const messages = $("lgPaste").value.split("\n").map(l => l.match(/^\s*@?([\w.]{2,40})\s*[:\-]\s+(.+)$/)).filter(Boolean).map(m => ({ author_id: m[1].toLowerCase(), author_name: m[1], text: m[2] }));
-    if (!messages.length) return toast('Paste one message per line as "handle: message"');
-    await api(`/api/liveguard/sessions/${id}/chat`, { method: "POST", headers: auth(), body: { messages } }); $("lgPaste").value = ""; openLive(id);
+  if ($("lgWatch")) $("lgWatch").onclick = async () => {
+    try {
+      const c = await api(`/api/agent/consent/${x.platform}`, { headers: auth() });
+      if (!c.consented) {
+        if (!confirm(c.text + "\n\nPress OK to let the Bot Purge agent moderate your live on " + (PLATFORM_NAMES[x.platform] || x.platform) + ".")) return;
+        await api(`/api/agent/consent/${x.platform}`, { method: "POST", headers: auth() });
+      }
+      const r = await api(`/api/liveguard/sessions/${id}/watch`, { method: "POST", headers: auth(), body: { url: $("lgUrl").value.trim() } });
+      toast(r.note || "Moderating your live"); openLive(id);
+    } catch (e) { paywalled(e); }
+  };
+  if ($("lgDemo")) $("lgDemo").onclick = async () => {
+    if (lgDemoRunning) return;
+    lgDemoRunning = true;
+    try {
+      for (const [who, text] of LG_DEMO) {
+        await api(`/api/liveguard/sessions/${id}/chat`, { method: "POST", headers: auth(), body: { messages: [{ author_id: who, author_name: who, text }] } });
+        await openLive(id); await new Promise(r => setTimeout(r, 700));
+      }
+    } finally { lgDemoRunning = false; openLive(id); }
   };
   document.querySelectorAll("[data-undo-ev]").forEach(b => b.onclick = async () => { await api(`/api/liveguard/sessions/${id}/events/${b.dataset.undoEv}/undo`, { method: "POST", headers: auth() }); openLive(id); });
-  if (x.state === "running") lgTimer = setTimeout(() => openLive(id), 4000);
+  if (running) lgTimer = setTimeout(() => openLive(id), 2000);
 }
 
 // ---------- inbox ----------
@@ -441,7 +498,7 @@ async function loadInbox() {
   $("sRows").innerHTML = rows.map(r => {
     const who = r.name || (r.handle ? "@" + r.handle : r.sender_id);
     const k = `${esc(r.platform)}|${esc(r.sender_id)}`;
-    return `<tr><td><div class="who">${avatar(who, r.sender_id)}<div><div class="n">${esc(who)}</div><div class="small muted">${esc(r.platform === "email" ? r.sender_id : (PLATFORM_NAMES[r.platform] || r.platform))}</div>
+    return `<tr><td><div class="who">${avatar(who, r.sender_id)}<div><div class="n">${esc(who)}</div><div class="small muted">${esc(r.platform === "email" ? "Email · " + r.sender_id : (SOURCE_NAMES[r.platform] || r.platform))}</div>
         ${r.canary_hit ? `<span class="chip bad">Canary: confirmed AI bot</span>` : ""}</div></div></td>
       <td><span class="pill ${esc(r.label)}">${Math.round(r.score)}</span></td>
       <td><ul class="reasons">${r.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul></td><td class="hide-sm">${r.items}</td>
@@ -691,7 +748,9 @@ async function startJobs() {
     const { modes } = await api(`/api/removals/modes/${p}`);
     const n = rows.length, bots = rows.filter(r => r.label === "likely_bot").length;
     const counts = {}; rows.forEach(r => counts[r.direction] = (counts[r.direction] || 0) + 1);
-    const verbs = Object.entries(counts).map(([d, c]) => `${c} ${d === "friend" ? "unfriend" : d === "follower" ? "remove follower" : "unfollow"}`).join(", ");
+    const plural = (c, one, many) => `${c} ${c === 1 ? one : many}`;
+    const verbs = Object.entries(counts).map(([d, c]) => d === "friend" ? `unfriend ${plural(c, "friend", "friends")}`
+      : d === "follower" ? `remove ${plural(c, "follower", "followers")}` : `unfollow ${plural(c, "account", "accounts")}`).join(", ");
     $("cTitle").textContent = `${n} account${n > 1 ? "s" : ""} on ${PLATFORM_NAMES[p]}`;
     $("cDoRemove").checked = true; $("cDoBlock").checked = false; $("cDoReport").checked = false;
     $("cDoReport").disabled = !bots;
@@ -852,6 +911,21 @@ async function loadAlerts() {
 
 loadHelp(); show();
 if (new URLSearchParams(location.search).get("connected") === "x") toast("X connected and scanned.");
+
+// ---------- teach mode ----------
+$("teachGo").onclick = async () => {
+  const platform = $("iPlatform").value, action = $("iAction").value;
+  const pick = state.rows && state.rows.find(r => r.platform === platform);
+  $("teachNote").textContent = `A window is opening on ${PLATFORM_NAMES[platform]}. Do the steps to ${(ACTION_NAMES[action] || action).toLowerCase()} one account, then press Done in its top bar.`;
+  $("teachGo").disabled = true;
+  try {
+    const r = await api("/api/agent/teach", { method: "POST", headers: auth(), body: { platform, action, account_id: pick ? pick.account_id : null } });
+    $("teachSteps").innerHTML = r.steps.map(x => `<li>${esc(x)}</li>`).join("");
+    $("teachNote").textContent = r.note || (r.saved ? "Saved." : "Nothing saved.");
+    if (r.saved) loadHowto();
+  } catch (e) { paywalled(e); $("teachNote").textContent = ""; }
+  finally { $("teachGo").disabled = false; }
+};
 
 // ---------- installable app ----------
 if ("serviceWorker" in navigator && !navigator.userAgent.includes("pywebview")) navigator.serviceWorker.register("/sw.js").catch(() => {});

@@ -1,0 +1,9 @@
+www.botpurge.online {
+	encode gzip
+	reverse_proxy app:8000
+}
+
+# The bare domain goes to www.
+botpurge.online {
+	redir https://www.botpurge.online{uri} permanent
+}

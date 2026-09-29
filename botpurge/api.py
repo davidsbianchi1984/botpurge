@@ -82,7 +82,7 @@ class Services:
 
     def refresh_licenses(self) -> int:
         """Once a day, fetch renewed Protect licenses from the store (desktop copies)."""
-        store = store_url()
+        store = "" if Billing.store_configured() else store_url()     # the store itself needs no refresh
         if not store:
             return 0
         last = self.db.one("SELECT at FROM billing_events WHERE id='refresh-marker'")
@@ -295,8 +295,8 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     @app.get("/api/plans")
     def plans_catalog():
-        store = store_url()
         own = Billing.store_configured()
+        store = "" if own else store_url()                              # the store sells directly
         return {**catalog(), "store_url": store or ("" if not own else None), "can_buy": bool(store or own)}
 
     @app.get("/api/me/plan")
@@ -362,7 +362,7 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
 
     def _store(path: str, payload: dict) -> Optional[dict]:
         """Desktop copies forward store requests server-side (the page can't call another origin)."""
-        store = store_url()
+        store = "" if Billing.store_configured() else store_url()       # never forward to ourselves
         if not store:
             return None
         r = (svc.x_http or httpx.Client(timeout=20)).post(store + path, json=payload)
@@ -829,6 +829,64 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def liveguard_mode(sid: str, body: ModeIn, uid: str = Depends(user)):
         return svc.liveguard.set_mode(uid, sid, body.mode)
 
+    class WatchIn(BaseModel):
+        url: str = Field(max_length=500)
+
+    WATCH_HOSTS = {"tiktok": "tiktok.com", "instagram": "instagram.com", "facebook": "facebook.com", "kick": "kick.com"}
+
+    @app.post("/api/liveguard/sessions/{sid}/watch")
+    def liveguard_watch(sid: str, body: WatchIn, uid: str = Depends(user)):
+        """Desktop app: the agent opens the live as the moderator account and moderates its chat."""
+        svc.plans.require(uid, "liveguard")
+        x = svc.liveguard.session(uid, sid)
+        host = WATCH_HOSTS.get(x["platform"])
+        if not host:
+            raise HTTPException(400, "Twitch and YouTube chats are read through their official APIs; connect your moderator account instead")
+        if host not in body.url.lower() or not body.url.lower().startswith("https://"):
+            raise HTTPException(400, f"Paste the link to your live on {host}")
+        if x["state"] != "running":
+            raise HTTPException(400, "Start Live Guard first")
+        if sid in svc.liveguard.watchers:
+            return {"watching": True}
+        if not svc.agent.has_consent(uid, x["platform"]):
+            raise PermissionError(f"Accept the agent notice for {x['platform']} first")
+        try:
+            import playwright  # noqa: F401
+        except ImportError:
+            raise HTTPException(503, "Live Guard on TikTok, Instagram, Facebook and Kick runs in the Bot Purge desktop app")
+
+        def run():
+            from .agent.cockpit import Cockpit, Stopped
+            from .agent.livewatch import watch
+            from .agent.runner import Executor, Pacing
+
+            try:
+                pw, ctx = _agent_browser()
+            except Exception:
+                svc.liveguard.watchers.discard(sid)
+                return
+            try:
+                cockpit = Cockpit(ctx).install()
+                page = ctx.pages[0] if ctx.pages else ctx.new_page()
+                page.goto(body.url, wait_until="domcontentloaded")
+                watch(svc.liveguard, uid, sid, page, x["platform"], cockpit=cockpit,
+                      executor=Executor(Pacing(0.3, 0.8, 0, 0), timeout_ms=4000, cockpit=cockpit, ask_help=False))
+            except Stopped:
+                svc.liveguard.stop(uid, sid)
+            except Exception:
+                pass
+            finally:
+                svc.liveguard.watchers.discard(sid)
+                try:
+                    ctx.close()
+                    pw.stop()
+                except Exception:
+                    pass
+
+        svc.liveguard.watchers.add(sid)
+        threading.Thread(target=run, daemon=True, name=f"livewatch-{sid}").start()
+        return {"watching": True, "note": "A Bot Purge window opened on your live. Keep it open while you stream."}
+
     @app.post("/api/liveguard/sessions/{sid}/stop")
     def liveguard_stop(sid: str, uid: str = Depends(user)):
         return svc.liveguard.stop(uid, sid)
@@ -895,11 +953,53 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
                 custom[action] = mine["steps"]  # the customer's own written steps win
         pw, ctx = _agent_browser()
         try:
+            from .agent.cockpit import Cockpit
+            from .agent.runner import Executor
+
+            cockpit = Cockpit(ctx).install()          # visible cursor; the person can take over any time
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            return svc.agent.run_job(uid, job_id, page, custom_steps=custom)
+            return svc.agent.run_job(uid, job_id, page, executor=Executor(cockpit=cockpit), custom_steps=custom)
         finally:
             ctx.close()
             pw.stop()
+
+    class TeachIn(BaseModel):
+        platform: str
+        action: str
+        account_id: Optional[str] = None        # a flagged account to demonstrate on
+
+    @app.post("/api/agent/teach")
+    def agent_teach(body: TeachIn, uid: str = Depends(user)):
+        """Teach mode: the person does a process once in the agent's window; it's saved as their own steps."""
+        from .agent.cockpit import Cockpit, Stopped, steps_from_recording
+        from .instructions import PLATFORM_ACTIONS
+
+        svc.plans.require(uid, "agent")
+        if body.action not in PLATFORM_ACTIONS.get(body.platform, ()):
+            raise HTTPException(400, f"{body.platform} doesn't support {body.action}")
+        f = None
+        if body.account_id:
+            f = svc.db.one("SELECT handle, profile_url FROM flags WHERE user_id=? AND platform=? AND account_id=?",
+                           (uid, body.platform, body.account_id))
+        home = {"instagram": "https://www.instagram.com/", "tiktok": "https://www.tiktok.com/", "facebook": "https://www.facebook.com/",
+                "linkedin": "https://www.linkedin.com/", "x": "https://x.com/home"}[body.platform]
+        pw, ctx = _agent_browser()
+        try:
+            cockpit = Cockpit(ctx).install()
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            try:
+                raw = cockpit.record(page, start_url=(f and f["profile_url"]) or home)
+            except Stopped:
+                return {"saved": False, "steps": []}
+        finally:
+            ctx.close()
+            pw.stop()
+        lines = steps_from_recording(raw, {"handle": f and f["handle"]})
+        if len(lines) < 2:
+            return {"saved": False, "steps": lines, "note": "Nothing was recorded. Try again and click through the steps."}
+        saved = svc.instructions.submit(uid, body.platform, "web", body.action, lines)
+        return {"saved": True, "steps": lines, "id": saved["id"],
+                "note": "Saved as your own steps: the agent follows them for this action from now on. Edit them any time."}
 
     # Desktop app only: read texts straight from an iPhone backup on this computer
     @app.get("/api/local/iphone-backups")

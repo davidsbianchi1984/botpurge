@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS licenses (
 CREATE INDEX IF NOT EXISTS licenses_email ON licenses(email);
 CREATE INDEX IF NOT EXISTS licenses_sub ON licenses(stripe_subscription);
 CREATE TABLE IF NOT EXISTS billing_events (id TEXT PRIMARY KEY, type TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_learned (         -- buttons a person showed the agent when it couldn't find them
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL, action TEXT NOT NULL, step INTEGER NOT NULL,
+    label TEXT NOT NULL, at TEXT NOT NULL,
+    PRIMARY KEY (user_id, platform, action, step)
+);
 CREATE TABLE IF NOT EXISTS stripe_prices (plan TEXT PRIMARY KEY, price_id TEXT NOT NULL);   -- each plan's Stripe Price
 
 CREATE TABLE IF NOT EXISTS purchases (
@@ -233,6 +239,18 @@ CREATE TABLE IF NOT EXISTS lg_events (
     error TEXT
 );
 
+CREATE TABLE IF NOT EXISTS lg_chat (               -- the live chat as it scrolls by (recent messages only)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES lg_sessions(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    author_id TEXT NOT NULL,
+    author_name TEXT,
+    text TEXT,
+    action TEXT NOT NULL,                           -- none | delete | timeout | ban
+    event_id INTEGER                                -- the lg_events row when it was flagged
+);
+CREATE INDEX IF NOT EXISTS lg_chat_session ON lg_chat(session_id, id);
+
 CREATE TABLE IF NOT EXISTS secrets (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -414,6 +432,9 @@ class DB:
         icols = {r["name"] for r in self.conn.execute("PRAGMA table_info(removal_items)")}
         if "reason" not in icols:
             self.conn.execute("ALTER TABLE removal_items ADD COLUMN reason TEXT")
+        lcols = {r["name"] for r in self.conn.execute("PRAGMA table_info(lg_sessions)")}
+        if "checked" not in lcols:
+            self.conn.execute("ALTER TABLE lg_sessions ADD COLUMN checked INTEGER NOT NULL DEFAULT 0")
         ucols = {r["name"] for r in self.conn.execute("PRAGMA table_info(users)")}
         for col, ddl in (("plan", "TEXT NOT NULL DEFAULT 'free'"), ("plan_activated_at", "TEXT"), ("plan_renews_at", "TEXT"),
                          ("license_id", "TEXT"), ("license_key", "TEXT")):

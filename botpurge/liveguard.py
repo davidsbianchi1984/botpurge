@@ -34,6 +34,7 @@ from typing import Callable, Optional
 
 import httpx
 
+from . import rules
 from .messages import WEIGHTS, Message, MessageScorer, _norm
 
 PROTECTED_BADGES = {"broadcaster", "moderator", "vip", "owner", "staff", "admin"}
@@ -68,6 +69,41 @@ class Policy:
     max_actions_per_min: int = 30
     trust_subscribers: bool = True
     protected_names: list = field(default_factory=list)   # the streamer's and moderators' names, to catch impersonators
+    # The streamer's own chat rules. Bot and scam detection never looks at opinions; these are
+    # topic and conduct rules the streamer switches on, and they apply the same to every side.
+    no_politics: bool = False                              # keep political talk out of chat, from any side
+    no_abuse: bool = False                                 # insults and personal attacks, aimed at anyone
+    blocked_phrases: list = field(default_factory=list)    # the streamer's own words and phrases
+
+
+POLITICS = re.compile(
+    r"\b(trump\w*|biden|harris|kamala|obama|maga|democrats?|dems|republicans?|gop|liberals?|libs|libtards?|conservatives?|"
+    r"leftists?|right[- ]?wing\w*|left[- ]?wing\w*|antifa|woke|potus|president|congress|senate|elections?|impeach\w*|"
+    r"vote\s+(blue|red)|(blue|red)\s+wave|epstein|release\s+the\s+(files|list)|deep\s+state|the\s+party\s+whose|"
+    # slogans from every side
+    r"defund(\s+the)?\s*(police|cops|ice)?|abolish\s+(the\s+)?(ice|police)|ice\s+(raids?|agents?)|no\s+kings|the\s+resistance|"
+    r"back\s+the\s+blue|build\s+the\s+wall|deport\s+(them|em)\s+all|stop\s+the\s+steal|let'?s\s+go\s+brandon|"
+    r"lock\s+(her|him)\s+up|drain\s+the\s+swamp|blue\s+lives|all\s+lives|black\s+lives|free\s+palestine|stand\s+with\s+israel)\b")
+ABUSE = re.compile(
+    r"\b(pedo\w*|p\s*d\s*files?|pdf\s*files?|g?rapists?|groomers?|traitors?|nazis?|kys|kill\s+your\s*self|scumbags?|"
+    r"whores?|sluts?|retard\w*|pieces?\s+of\s+(shit|trash))\b")
+
+
+def chat_rule(policy: Policy, text: str) -> Optional[str]:
+    """Which of the streamer's own chat rules a message breaks, if any (disguised spellings included)."""
+    from . import rules
+
+    c = rules.normalize(text)
+    t = " ".join(re.sub(r"[^\w\s']", " ", (c.leet or "") + " " + (c.text or "").lower()).split())
+    for phrase in policy.blocked_phrases or []:
+        p = " ".join(re.sub(r"[^\w\s']", " ", rules.normalize(str(phrase)).leet or "").split())
+        if p and re.search(r"(?<!\w)" + re.escape(p) + r"(?!\w)", t):
+            return f"Your chat rule: blocked words (\"{phrase}\")"
+    if policy.no_abuse and ABUSE.search(t):
+        return "Your chat rule: no insults or personal attacks"
+    if policy.no_politics and POLITICS.search(t):
+        return "Your chat rule: no political talk in this chat"
+    return None
 
 
 class Judge:
@@ -114,6 +150,12 @@ class Judge:
                 pitch = "solicitation" in sigs or "link_drop" in sigs or "fake_giveaway" in sigs
                 sigs["coordinated_script"] = (1.0 if pitch else 0.5,
                                               f"Same scripted line as {len(authors) - 1} other accounts just now")
+        rule = chat_rule(self.policy, m.text)
+        if rule:
+            sigs["chat_rule"] = (1.0, rule)
+        bait = rules.evaluate_username(m.author_name or m.author_id)
+        if bait:
+            sigs["bait_name"] = (1.0, bait[0].reason)
         imp = impersonates(m.author_name or m.author_id, self.policy.protected_names)
         if imp:
             sigs["impersonation"] = (1.0, f"Name imitates {imp}, but it's a different account")
@@ -122,7 +164,7 @@ class Judge:
         elif key in self.scorer.known_bots:
             sigs["known_bot"] = (1.0, "Already flagged as a bot in your followers")
 
-        weights = {**WEIGHTS, "confirmed_bot": 0.85, "coordinated_script": 0.8, "impersonation": 0.85}
+        weights = {**WEIGHTS, "confirmed_bot": 0.85, "coordinated_script": 0.8, "impersonation": 0.85, "bait_name": 0.5, "chat_rule": 0.7}
         reasons = sorted(((weights[c] * s, t, c) for c, (s, t) in sigs.items()), reverse=True)
         p = 1.0
         for w, _, _ in reasons:
@@ -317,6 +359,7 @@ class LiveGuardService:
         self.judges: dict[str, Judge] = {}
         self.moderators: dict[str, object] = {}
         self.stops: dict[str, threading.Event] = {}
+        self.watchers: set[str] = set()      # sessions whose chat the desktop agent is reading
 
     def _judge_for(self, user_id: str, platform: str, policy: Policy) -> Judge:
         canaries = [r["token"] for r in self.db.q("SELECT token FROM canaries WHERE user_id=?", (user_id,))]
@@ -341,7 +384,7 @@ class LiveGuardService:
         if pol.mode not in ("watch", "protect"):
             raise ValueError("mode must be watch or protect")
         sid = sec.new_id("lg_")
-        self.db.x("INSERT INTO lg_sessions VALUES (?,?,?,?,?,?,?,?)",
+        self.db.x("INSERT INTO lg_sessions(id,user_id,platform,channel,policy_json,state,started_at,stopped_at) VALUES (?,?,?,?,?,?,?,?)",
                   (sid, user_id, platform, channel, self.dumps(pol.__dict__), "running", sec.iso(), None))
         self.judges[sid] = self._judge_for(user_id, platform, pol)
         if connect and platform in ("twitch", "youtube"):
@@ -390,16 +433,31 @@ class LiveGuardService:
                     applied = 1
                 except Exception as exc:  # keep moderating even if one call fails
                     error = str(exc)[:300]
+            event_id = None
             if d.action != "none" or d.score >= 40:
-                self.db.x("INSERT INTO lg_events(session_id,at,author_id,author_name,text,score,action,reasons_json,applied,error)"
-                          " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                          (sid, sec.iso(m.at), m.author_id, m.author_name, m.text[:500], d.score, d.action,
-                           self.dumps(d.reasons), applied, error))
-            out.append({"message_id": m.message_id, "author_id": m.author_id, "action": d.action, "score": d.score,
+                with self.db.tx() as tx:
+                    event_id = tx.execute("INSERT INTO lg_events(session_id,at,author_id,author_name,text,score,action,reasons_json,applied,error)"
+                                          " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                          (sid, sec.iso(m.at), m.author_id, m.author_name, m.text[:500], d.score, d.action,
+                                           self.dumps(d.reasons), applied, error)).lastrowid
+            # The chat as it scrolls by, with what Live Guard did to each message.
+            self.db.x("INSERT INTO lg_chat(session_id,at,author_id,author_name,text,action,event_id) VALUES (?,?,?,?,?,?,?)",
+                      (sid, sec.iso(m.at), m.author_id, m.author_name, m.text[:500], d.action, event_id))
+            out.append({"message_id": m.message_id, "author_id": m.author_id, "author_name": m.author_name, "event_id": event_id,
+                        "action": d.action, "score": d.score,
                         "reasons": d.reasons, "duration_s": d.duration_s,
                         # For callers that act themselves (the agent on TikTok/Instagram):
                         "act": d.action != "none" and judge.policy.mode == "protect" and mod is None})
+        self.db.x("UPDATE lg_sessions SET checked=checked+? WHERE id=?", (len(messages), sid))
+        # Keep only the recent chat; flagged messages stay in lg_events for the record.
+        self.db.x("DELETE FROM lg_chat WHERE session_id=? AND id <= (SELECT id FROM lg_chat WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET 300)",
+                  (sid, sid))
         return out
+
+    def mark_applied(self, user_id: str, sid: str, event_id: int, error: Optional[str] = None) -> None:
+        """The agent reports it carried out an action on the platform (TikTok, Instagram…)."""
+        self._row(user_id, sid)
+        self.db.x("UPDATE lg_events SET applied=?, error=? WHERE id=? AND session_id=?", (0 if error else 1, error, event_id, sid))
 
     def set_mode(self, user_id: str, sid: str, mode: str) -> dict:
         if mode not in ("watch", "protect"):
@@ -443,9 +501,13 @@ class LiveGuardService:
         counts = {x["action"]: x["n"] for x in self.db.q("SELECT action, COUNT(*) n FROM lg_events WHERE session_id=? GROUP BY action", (sid,))}
         events = [{**dict(e), "reasons": self.loads(e["reasons_json"], [])} for e in
                   self.db.q("SELECT * FROM lg_events WHERE session_id=? ORDER BY id DESC LIMIT 100", (sid,))]
+        chat = [dict(c) for c in self.db.q(
+            "SELECT id, at, author_id, author_name, text, action, event_id FROM lg_chat WHERE session_id=? ORDER BY id DESC LIMIT 80", (sid,))][::-1]
+        counts.pop("none", None)
         return {"id": sid, "platform": r["platform"], "channel": r["channel"], "state": r["state"],
                 "policy": self.loads(r["policy_json"]), "started_at": r["started_at"], "stopped_at": r["stopped_at"],
-                "counts": counts, "connected": sid in self.moderators, "events": events}
+                "counts": counts, "checked": r["checked"], "connected": sid in self.moderators or sid in self.watchers,
+                "watching": sid in self.watchers, "events": events, "chat": chat}
 
     def sessions(self, user_id: str) -> list[dict]:
         return [{k: r[k] for k in ("id", "platform", "channel", "state", "started_at", "stopped_at")}

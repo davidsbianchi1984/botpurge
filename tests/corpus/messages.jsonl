@@ -62,3 +62,25 @@
 {"kind": "sms", "platform": "sms", "label": "benign", "text": "Hey it's Mike from soccer, are we still on for practice tomorrow?", "sender_name": ""}
 {"kind": "sms", "platform": "sms", "label": "benign", "text": "Dinner tomorrow at 7? Mom's making lasagna", "sender_name": ""}
 {"kind": "sms", "platform": "sms", "label": "benign", "text": "Your Amazon order has shipped! Track at https://www.amazon.com/progress-tracker", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "scam", "text": "I made $8,400 this week with my trading coach, message me on WhatsApp", "sender_name": ""}
+{"kind": "comment", "platform": "instagram", "label": "scam", "text": "I just withdrew $12,000 from the crypto platform my mentor showed me, ask me how", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "I made $40 this week selling my crafts at the market, so proud", "sender_name": ""}
+{"kind": "comment", "platform": "x", "label": "legit", "text": "Honestly I lost $300 trading crypto last year, never again", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "scam", "text": "Send 0.1 BTC and get 0.2 BTC back instantly, official giveaway", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "scam", "text": "Top 5 people to type YES get an iPhone 16, DM me", "sender_name": ""}
+{"kind": "live", "platform": "youtube", "label": "scam", "text": "Want to make $500 a day from home? Telegram me", "sender_name": ""}
+{"kind": "live", "platform": "twitch", "label": "legit", "text": "I sent 0.1 BTC to my brother yesterday and the fee was insane", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "top 3 people in chat get a shoutout at the end!", "sender_name": ""}
+{"kind": "comment", "platform": "youtube", "label": "legit", "text": "I used to make $500 a week delivering pizza lol", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "scam", "text": "I'M PAYING 8 GRAND TO THE FIRST 5 PEOPLE TO MESSAGE ME \"BILLS\"", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "scam", "text": "$3k for the 1st person to message me \"PAY\"", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "scam", "text": "┌─┐ ┌──┐ ┌┐\n└┐┌┘│┌┐│ ││ ┌──┐ ┌┐\n─││─│└┘│ ││ │  │ │└┐ IS THE BEST\n└┘ └──┘ └┘ └──┘ └─┘ PRESIDENT EVER", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "Can't wait to vote Blue in NC💙 💙💙", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "GodBless Trump", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "when is the date to vote month", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "The next UN secretary must be Chinese !", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "first person to guess the song gets a shoutout!", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "message me later about the recipe", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "scam", "text": "$7,000 FOR ANY PERSON TO MESSAGE ME\"GOD DID\"", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "I paid $20 for this shirt, message me if you want the link lol", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "the tickets were $50 each, text me if you want to go", "sender_name": ""}

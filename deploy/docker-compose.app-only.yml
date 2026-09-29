@@ -1,0 +1,12 @@
+# For a server that already runs a web server (like Caddy) for other sites:
+# Bot Purge listens only on this machine (127.0.0.1:8765); your web server forwards www.botpurge.online to it.
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    env_file: .env
+    ports: ["127.0.0.1:8765:8000"]
+    volumes:
+      - botpurge-data:/data
+volumes:
+  botpurge-data:

@@ -25,7 +25,7 @@ jobs:
         # setting can't turn this check into a silent pass.
         run: |
           set -o pipefail
-          BOTPURGE_UI_TESTS=1 pytest -q -rs tests/test_ui.py tests/test_agent.py | tee ui.log
+          BOTPURGE_UI_TESTS=1 pytest -q -rs tests/test_ui.py tests/test_agent.py tests/test_cockpit.py tests/test_livewatch.py | tee ui.log
           ! grep -q "skipped" ui.log
       - name: Accuracy gates and red team
         run: python -m botpurge.evaluation

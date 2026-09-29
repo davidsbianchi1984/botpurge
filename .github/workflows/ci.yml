@@ -14,3 +14,14 @@ jobs:
           python-version: "3.12"
       - run: pip install -e .[dev]
       - run: pytest -q
+
+  server-image:
+    # The image the website runs on (deploy/): it must build and answer before it goes live.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t botpurge .
+      - run: |
+          docker run -d --name bp -p 8000:8000 -e BOTPURGE_SECRET=ci-only botpurge
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8000/api/health && curl -sf http://127.0.0.1:8000/ >/dev/null && exit 0; sleep 2; done
+          docker logs bp; exit 1

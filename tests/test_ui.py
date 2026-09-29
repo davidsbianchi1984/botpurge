@@ -273,3 +273,28 @@ def test_installable_and_opens_offline(server):
         pg.reload()
         assert pg.title() == "Bot Purge" and pg.is_visible("header.top")
         br.close()
+
+
+def test_live_guard_shows_the_chat_like_a_moderator(server):
+    B = server["url"]
+    with sync_api.sync_playwright() as p:
+        br = launch(p)
+        pg = br.new_page(viewport={"width": 430, "height": 900})
+        pg.goto(B + "/")
+        pg.fill("#email", "streamer@example.com")
+        pg.click("#signup")
+        pg.wait_for_selector("#appView:not(.hidden)")
+        pg.click("#tabs [data-tab=live]")
+        pg.select_option("#lgPlatform", "tiktok")
+        pg.fill("#lgChannel", "Friday live")
+        pg.select_option("#lgMode", "protect")
+        pg.click("#lgStart")
+        pg.wait_for_selector("#lgUrl")                                   # "Start moderating" for your live
+        assert pg.is_visible("#lgWatch") and not pg.locator("#lgPaste").count()
+        pg.click("#lgSession details summary")
+        pg.click("#lgDemo")
+        pg.wait_for_function("document.querySelectorAll('#lgChat .msg').length >= 9", timeout=20000)
+        bad = pg.eval_on_selector_all("#lgChat .msg.bad b", "els => els.map(e => e.textContent)")
+        assert {"free_gift_99", "free_gift_98", "crypto_ann77"} <= set(bad) and "gamer_joe" not in bad
+        assert "messages checked" in pg.inner_text(".lgstats") and pg.inner_text(".lgstats").startswith("9")
+        br.close()

@@ -141,3 +141,70 @@ def test_streamer_impersonators_are_banned():
         assert j.judge(m).action == "ban", name
     ok = ChatMessage(platform="twitch", author_id="fan1", author_name="KaiFanatic", text="love the stream", at=T0)
     assert j.judge(ok).action == "none"
+
+
+def test_chat_rules_are_the_streamers_and_apply_to_every_side():
+    from botpurge.liveguard import Judge, Policy, ChatMessage, chat_rule
+    from botpurge import security as sec
+
+    left = ["Defund ICE", "Release The Files!!", "Can't wait to vote Blue in NC", "abolish ICE now"]
+    right = ["GodBless Trump", "BACK THE BLUE", "Build the wall", "lets go brandon"]
+    everyday = ["ice cream after this?", "police sirens outside my house", "the grape juice is great", "I'm a therapist", "hey everyone!"]
+    off = Policy()
+    assert not any(chat_rule(off, t) for t in left + right)                 # off: nobody's opinion is touched
+    on = Policy(no_politics=True)
+    assert all(chat_rule(on, t) for t in left) and all(chat_rule(on, t) for t in right)   # on: every side alike
+    assert not any(chat_rule(on, t) for t in everyday)
+    abuse = Policy(no_abuse=True)
+    assert chat_rule(abuse, "Trump: PDFile, gRapist, cheater") and chat_rule(abuse, "you liberal traitor")
+    assert not chat_rule(abuse, "GodBless Trump")
+    own = Policy(blocked_phrases=["spoilers"])
+    assert chat_rule(own, "SP0ILERS: he dies at the end") and not chat_rule(own, "no spoiling please")
+    # In chat, a broken rule removes the message but isn't counted as a bot.
+    d = Judge(Policy(mode="protect", no_politics=True)).judge(ChatMessage(platform="tiktok", author_id="a", author_name="a", text="Defund ICE", at=sec.now()))
+    assert d.action == "delete" and d.reasons == ["Your chat rule: no political talk in this chat"]
+
+
+def test_new_money_bait_and_text_art_are_caught():
+    from botpurge.liveguard import Judge, Policy, ChatMessage
+    from botpurge import security as sec
+
+    j = Judge(Policy(mode="protect"))
+    art = "┌─┐ ┌──┐ ┌┐\n└┐┌┘│┌┐│ ││ ┌──┐ ┌┐\n─││─│└┘│ ││ │  │ │└┐ IS THE BEST"
+    for who, text in [("DM ME WITH GOD DID", "I'M PAYING 8 GRAND TO THE FIRST 5 PEOPLE TO MESSAGE ME \"BILLS\""),
+                      ("Robert Watt", "$3k for the 1st person to message me \"PAY\""), ("artist", art)]:
+        assert j.judge(ChatMessage(platform="tiktok", author_id=who, author_name=who, text=text, at=sec.now())).action != "none", text
+
+
+def test_chat_rules_are_the_streamers_and_apply_to_every_side():
+    from botpurge.liveguard import ChatMessage, Judge, Policy, chat_rule
+    from botpurge import security as sec
+
+    left = ["Defund ICE", "Release The Files!!", "Can't wait to vote Blue in NC", "abolish ICE now"]
+    right = ["GodBless Trump", "BACK THE BLUE", "Build the wall", "lets go brandon"]
+    everyday = ["ice cream after this?", "police sirens outside my house", "the grape juice is great", "I'm a therapist", "hey everyone!"]
+    assert not any(chat_rule(Policy(), t) for t in left + right)          # rules off: nobody's opinion is touched
+    on = Policy(no_politics=True)
+    assert all(chat_rule(on, t) for t in left + right)                    # on: every side alike
+    assert not any(chat_rule(on, t) for t in everyday)
+    abuse = Policy(no_abuse=True)
+    assert chat_rule(abuse, "Trump: PDFile, gRapist, cheater") and chat_rule(abuse, "you liberal traitor")
+    assert not chat_rule(abuse, "GodBless Trump")
+    own = Policy(blocked_phrases=["spoilers"])
+    assert chat_rule(own, "SP0ILERS: he dies at the end") and not chat_rule(own, "no spoiling please")
+    d = Judge(Policy(mode="protect", no_politics=True)).judge(
+        ChatMessage(platform="tiktok", author_id="a", author_name="a", text="Defund ICE", at=sec.now()))
+    assert d.action == "delete" and d.reasons == ["Your chat rule: no political talk in this chat"]
+
+
+def test_money_to_message_me_scams_are_caught_on_the_first_post():
+    from botpurge.liveguard import ChatMessage, Judge, Policy
+    from botpurge import rules, security as sec
+
+    art = "┌─┐ ┌──┐ ┌┐\n└┐┌┘│┌┐│ ││ ┌──┐ ┌┐\n─││─│└┘│ ││ │  │ │└┐ IS THE BEST"
+    for who, text in [("Micheal fx", '$7,000 FOR ANY PERSON TO MESSAGE ME"GOD DID"'),
+                      ("DM ME WITH GOD DID", "I'M PAYING 8 GRAND TO THE FIRST 5 PEOPLE TO MESSAGE ME \"BILLS\""),
+                      ("Robert Watt", "$3k for the 1st person to message me \"PAY\""), ("artist", art)]:
+        d = Judge(Policy(mode="protect")).judge(ChatMessage(platform="tiktok", author_id=who, author_name=who, text=text, at=sec.now()))
+        assert d.action != "none", text
+    assert rules.evaluate_username("DM ME WITH GOD DID") and not rules.evaluate_username("Cody1211")
