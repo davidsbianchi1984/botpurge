@@ -6,6 +6,9 @@ Runs locally; photos are never uploaded anywhere and never stored — only the
 Labels:
   * ``blank``   — a flat single colour (or nearly): a default or placeholder picture
   * ``no_face`` — no human face found (back of the head, a car, a logo, a sunset...)
+  * ``hidden_face`` — a person is in the photo but their face isn't: turned away, a phone held
+    in front of it (mirror selfies), or too far away to see. Fake accounts use these so the
+    stolen photo can't be traced to a face.
 
 "No face" is weak evidence on its own (plenty of real people use a pet or a
 view as their picture); it only adds up alongside bot-like messages or other
@@ -26,6 +29,7 @@ except ImportError:  # pragma: no cover
     Image = None  # type: ignore
 
 _cascades = None
+_bodies = None
 
 
 def _detectors():
@@ -41,6 +45,31 @@ def _detectors():
         except Exception:  # OpenCV missing or without cascades
             _cascades = []
     return _cascades
+
+
+def _body_detectors():
+    global _bodies
+    if _bodies is None:
+        try:
+            import cv2
+
+            base = cv2.data.haarcascades
+            _bodies = [cv2.CascadeClassifier(base + n) for n in ("haarcascade_upperbody.xml", "haarcascade_fullbody.xml")]
+            _bodies = [c for c in _bodies if not c.empty()]
+        except Exception:
+            _bodies = []
+    return _bodies
+
+
+def has_body(img) -> Optional[bool]:
+    """Is there a person (upper body or full figure) in the photo? None when no detector is available."""
+    dets = _body_detectors()
+    if not dets:
+        return None
+    import numpy as np
+
+    gray = np.array(img.convert("L").resize((256, 256)))
+    return any(len(d.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(40, 40))) for d in dets)
 
 
 def available() -> dict:
@@ -64,7 +93,7 @@ def has_face(img) -> Optional[bool]:
     return False
 
 
-def analyze(data: bytes, face_detector: Optional[Callable] = None) -> dict:
+def analyze(data: bytes, face_detector: Optional[Callable] = None, body_detector: Optional[Callable] = None) -> dict:
     """{"hash": hex or None, "labels": [...]} for an encoded image."""
     if Image is None:
         return {"hash": None, "labels": []}
@@ -83,6 +112,8 @@ def analyze(data: bytes, face_detector: Optional[Callable] = None) -> dict:
     face = (face_detector or has_face)(img)
     if face is False or (face is None and "blank" in labels):
         labels.append("no_face")
+        if face is False and "blank" not in labels and (body_detector or has_body)(img):
+            labels.append("hidden_face")
     return {"hash": h, "labels": labels}
 
 

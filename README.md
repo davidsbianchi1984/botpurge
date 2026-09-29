@@ -1,6 +1,6 @@
 # Bot Purge
 
-**Bots, fakes and scammers, gone.** Bot Purge scans your followers, friends and the accounts you follow, plus your DMs, texts, email, connected apps and live-stream chats. It shows every threat it finds, antivirus-style ("37 threats found"), and removes them. For people and creators, and for companies that want to purge bots from their whole platform.
+**Bots, fakes and scammers, gone.** Bot Purge scans your followers, friends and the accounts you follow, plus your DMs, texts, email, connected apps and live-stream chats. It shows every threat it finds, antivirus-style ("37 bots found"), and removes them. For people and creators, and for companies that want to purge bots from their whole platform.
 
 It never needs a social media password. X connects through its official sign-in; everything else is read from the data export each platform lets you download, or from a phone or mail backup on your own computer.
 
@@ -8,7 +8,7 @@ It never needs a social media password. X connects through its official sign-in;
 
 | | | | |
 |:-:|:-:|:-:|:-:|
-| <img src="docs/screenshots/01-start.jpg" width="200" alt="Sign up with just an email"><br>**Free scan, no passwords** | <img src="docs/screenshots/02-threats-found.jpg" width="200" alt="Threats found on every network"><br>**Threats found, every network** | <img src="docs/screenshots/03-flagged-accounts.jpg" width="200" alt="Flagged accounts with reasons"><br>**Every flag has reasons** | <img src="docs/screenshots/04-remove-block-report.jpg" width="200" alt="Remove, block or report"><br>**Remove, block or report** |
+| <img src="docs/screenshots/01-start.jpg" width="200" alt="Sign up with just an email"><br>**Free scan, no passwords** | <img src="docs/screenshots/02-threats-found.jpg" width="200" alt="Bots found on every network"><br>**Bots found, every network** | <img src="docs/screenshots/03-flagged-accounts.jpg" width="200" alt="Flagged accounts with reasons"><br>**Every flag has reasons** | <img src="docs/screenshots/04-remove-block-report.jpg" width="200" alt="Remove, block or report"><br>**Remove, block or report** |
 | <img src="docs/screenshots/05-step-by-step.jpg" width="200" alt="Step-by-step instructions"><br>**Step by step, or done for you** | <img src="docs/screenshots/06-messages-email-texts.jpg" width="200" alt="Scam messages, emails and texts"><br>**DMs, texts and email** | <img src="docs/screenshots/07-live-guard.jpg" width="200" alt="Live Guard bans giveaway bots"><br>**Live Guard** | <img src="docs/screenshots/08-plans.jpg" width="200" alt="Plans"><br>**Plans: free during beta** |
 | <img src="docs/screenshots/09-select-all.jpg" width="200" alt="Select all flagged accounts"><br>**Select all, delete in one go** | <img src="docs/screenshots/10-removal-queue.jpg" width="200" alt="Every selected account in the removal queue"><br>**One removal list** | <img src="docs/screenshots/11-gmail-yahoo-mail.jpg" width="200" alt="Scam emails from Gmail and Yahoo Mail flagged, ready to move to Trash"><br>**Scam email to Trash** | <img src="docs/screenshots/12-your-agent.jpg" width="200" alt="Telling the agent to scan only TikTok followers"><br>**Tell your agent what to scan** |
 
@@ -79,6 +79,13 @@ Detection judges **behaviour, never opinions**. A flood of copy-pasted lines get
 - **Evasion:** before any rule runs, text is normalised. Lookalike letters, zero-width characters, split links ("site . com") and stacked accents are undone, and hiding tricks count as evidence in themselves.
 
 The research behind every rule, with sources and caveats, is in [docs/detection-rules.md](docs/detection-rules.md).
+
+### Tells from real bot accounts
+
+- **Random-letter names:** handles and names like "yznnkdcp" or "ynvpxs" that no person would pick.
+- **Names never set:** a display name still at the default "user45418458969" while the handle is something else.
+- **Hidden faces:** a person is in the profile photo but their face never is (turned away, a phone in front of it in a mirror selfie, or too far away). Stronger than a photo with no person at all.
+- **Live chat:** a random-letter name adds weight to scam text, but never gets a viewer removed on its own.
 
 ### Canary traps
 

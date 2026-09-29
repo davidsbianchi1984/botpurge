@@ -641,12 +641,12 @@ async function loadResult() {
   const box = $("scanResult");
   if (!s.last_scan) { box.innerHTML = `<div class="result-head"><div class="shield idle">🛡️</div><div><div class="big">Run your first free scan</div><div class="muted">Connect X or upload an export below. Scanning is always free.</div></div></div>`; return; }
   const color = s.status === "clean" ? "ok" : s.status === "at_risk" ? "bad" : "warn";
-  const head = s.threats ? `${s.threats} threat${s.threats > 1 ? "s" : ""} found` : "No threats found";
+  const head = s.threats ? `${s.threats} bot${s.threats > 1 ? "s" : ""} found` : "No bots found";
   box.innerHTML = `<div class="result-head"><div class="shield ${color}">${s.threats ? "⚠️" : "✅"}</div><div>
       <div class="big">${head}</div><div class="muted small">${s.scanned.toLocaleString()} accounts scanned · ${s.high_risk} high risk · ${s.bot_rings} bot ring${s.bot_rings === 1 ? "" : "s"} · last scan ${fmtDate(s.last_scan)}${s.removed ? ` · ${s.removed} removed so far` : ""}</div></div></div>
     <div class="cats">${Object.entries(s.categories).map(([k, n]) => `<div class="cat ${n ? "hit" : ""}"><span>${CAT_NAMES[k]}</span><b>${n}</b></div>`).join("")}</div>
     ${s.threats ? `<div class="cta">
-      <button class="primary big-btn" id="ctaClean">Remove all ${s.threats} threats</button><span class="price">${priceTag(plan("cleanup"))}</span>
+      <button class="primary big-btn" id="ctaClean">Remove all ${s.threats} bots</button><span class="price">${priceTag(plan("cleanup"))}</span>
       <button class="big-btn" id="ctaProtect">Protect me from future bots</button><span class="price">${priceTag(plan("protect"))}</span>
       <button class="link" id="ctaReview">Review the list first</button></div>` : `<div class="cta"><button class="big-btn" id="ctaProtect">Stay protected</button><span class="price">${priceTag(plan("protect"))}</span></div>`}`;
   if ($("ctaClean")) $("ctaClean").onclick = async () => { await activate("cleanup", true); state.ftab = "likely_bot"; switchTab("flags"); };

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **More bot tells:** random-letter names, names never set ("user45418458969"), and profile photos that show a person but hide the face. The dashboard now says "bots found".
+
 - **Uploads as downloaded:** upload the export .zip (or file) without unzipping or picking the network; Bot Purge works out which network or message type it is. Drag and drop onto the upload boxes. Picking it yourself still works.
 - **Yahoo Mail:** inbox connection, next to Gmail and Outlook. All three now check the Inbox and Spam folders.
 - **Email cleanup (optional):** with the extra permission, move every flagged sender's emails to Trash or Spam in one press. Never deleted for good.

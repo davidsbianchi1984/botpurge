@@ -164,7 +164,10 @@ class Judge:
         elif key in self.scorer.known_bots:
             sigs["known_bot"] = (1.0, "Already flagged as a bot in your followers")
 
-        weights = {**WEIGHTS, "confirmed_bot": 0.85, "coordinated_script": 0.8, "impersonation": 0.85, "bait_name": 0.5, "chat_rule": 0.7}
+        if rules.keyboard_mash(m.author_name or m.author_id):   # "ynvpxs": weak alone, adds up with scam text
+            sigs["random_name"] = (1.0, "Name is random letters")
+        weights = {**WEIGHTS, "confirmed_bot": 0.85, "coordinated_script": 0.8, "impersonation": 0.85, "bait_name": 0.5, "chat_rule": 0.7,
+                   "random_name": 0.25}
         reasons = sorted(((weights[c] * s, t, c) for c, (s, t) in sigs.items()), reverse=True)
         p = 1.0
         for w, _, _ in reasons:
