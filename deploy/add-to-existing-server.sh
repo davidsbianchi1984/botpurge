@@ -46,8 +46,10 @@ if systemctl is-active --quiet caddy && [ -f "$CADDYFILE" ]; then
   else
     echo "Caddy already has $SITE_HOST."
   fi
+elif docker ps --format '{{.Image}}' | grep -q caddy; then
+  SITE_HOST="$SITE_HOST" bash /opt/botpurge/deploy/attach-to-docker-caddy.sh      # Caddy runs in Docker here
 else
-  echo "Caddy isn't running as a system service here. Add this to your web server's config instead:"; echo "$BLOCK"
+  echo "Caddy isn't running here. Add this to your web server's config instead:"; echo "$BLOCK"
 fi
 echo
 echo "Bot Purge is running at https://$SITE_HOST. Fill in /opt/botpurge/deploy/.env (nano /opt/botpurge/deploy/.env), then: cd /opt/botpurge/deploy && docker compose up -d"
