@@ -16,6 +16,17 @@ Automatic updates (step 5) work the same way.
 1. In IONOS: **Servers & Cloud → VPS → Linux**. Pick **Ubuntu 24.04**.
 2. Note the server's **IP address** and **root password** (IONOS shows them after setup).
 
+## No domain yet?
+
+Run the install with a stand-in name for the server's own IP; it gets a real HTTPS certificate too:
+
+```
+curl -fsSL https://raw.githubusercontent.com/davidsbianchi1984/botpurge/main/deploy/add-to-existing-server.sh | SITE_HOST=74-208-19-30.sslip.io bash
+```
+
+When the domain is bought, do step 2 below and run the script again without `SITE_HOST`; then change
+`BOTPURGE_PUBLIC_URL` in `.env` to `https://www.botpurge.online` and `docker compose up -d`.
+
 ## 2. Point the domain at it (IONOS → Domains & SSL → botpurge.online → DNS)
 | Type | Host name | Points to |
 |---|---|---|
