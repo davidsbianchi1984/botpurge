@@ -17,6 +17,17 @@ NET=$(docker inspect "$CADDY" --format '{{range $k, $v := .NetworkSettings.Netwo
 if ! docker inspect "$APP" --format '{{json .NetworkSettings.Networks}}' | grep -q "\"$NET\""; then
   docker network connect "$NET" "$APP"; echo "Joined $APP to Caddy's network ($NET)."
 fi
+# ...and keep it there: `docker compose up -d` rebuilds the container, which would otherwise drop
+# off Caddy's network (Caddy then answers 502). A second compose file declares the network for good.
+DEPLOY=$(cd "$(dirname "$0")" && pwd); [ -f "$DEPLOY/.env" ] || DEPLOY=/opt/botpurge/deploy   # also works from a downloaded copy
+if [ -f "$DEPLOY/.env" ]; then
+  printf 'services:\n  app:\n    networks: [default, caddy]\nnetworks:\n  caddy:\n    external: true\n    name: %s\n' "$NET" > "$DEPLOY/docker-compose.caddy-net.yml"
+  if grep -q '^COMPOSE_FILE=' "$DEPLOY/.env"; then
+    grep -q 'docker-compose.caddy-net.yml' "$DEPLOY/.env" || sed -i 's|^COMPOSE_FILE=.*|&:docker-compose.caddy-net.yml|' "$DEPLOY/.env"
+  else
+    echo "COMPOSE_FILE=docker-compose.app-only.yml:docker-compose.caddy-net.yml" >> "$DEPLOY/.env"
+  fi
+fi
 
 # 2. The site block, appended to the Caddyfile Caddy is using (on the host, so it survives restarts).
 BLOCK="

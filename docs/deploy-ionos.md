@@ -27,6 +27,10 @@ curl -fsSL https://raw.githubusercontent.com/davidsbianchi1984/botpurge/main/dep
 When the domain is bought, do step 2 below and run the script again without `SITE_HOST`; then change
 `BOTPURGE_PUBLIC_URL` in `.env` to `https://www.botpurge.online` and `docker compose up -d`.
 
+If the site answers **502** after a `docker compose up -d`, the rebuilt container fell off Caddy's
+network. `bash /opt/botpurge/deploy/attach-to-docker-caddy.sh` puts it back and, from then on, keeps it
+there across restarts (it writes `docker-compose.caddy-net.yml` and adds it to `COMPOSE_FILE` in `.env`).
+
 ## 2. Point the domain at it (IONOS → Domains & SSL → botpurge.online → DNS)
 | Type | Host name | Points to |
 |---|---|---|
