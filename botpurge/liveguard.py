@@ -317,6 +317,7 @@ class LiveGuardService:
         self.judges: dict[str, Judge] = {}
         self.moderators: dict[str, object] = {}
         self.stops: dict[str, threading.Event] = {}
+        self.watchers: set[str] = set()      # sessions whose chat the desktop agent is reading
 
     def _judge_for(self, user_id: str, platform: str, policy: Policy) -> Judge:
         canaries = [r["token"] for r in self.db.q("SELECT token FROM canaries WHERE user_id=?", (user_id,))]
@@ -341,7 +342,7 @@ class LiveGuardService:
         if pol.mode not in ("watch", "protect"):
             raise ValueError("mode must be watch or protect")
         sid = sec.new_id("lg_")
-        self.db.x("INSERT INTO lg_sessions VALUES (?,?,?,?,?,?,?,?)",
+        self.db.x("INSERT INTO lg_sessions(id,user_id,platform,channel,policy_json,state,started_at,stopped_at) VALUES (?,?,?,?,?,?,?,?)",
                   (sid, user_id, platform, channel, self.dumps(pol.__dict__), "running", sec.iso(), None))
         self.judges[sid] = self._judge_for(user_id, platform, pol)
         if connect and platform in ("twitch", "youtube"):
@@ -390,16 +391,31 @@ class LiveGuardService:
                     applied = 1
                 except Exception as exc:  # keep moderating even if one call fails
                     error = str(exc)[:300]
+            event_id = None
             if d.action != "none" or d.score >= 40:
-                self.db.x("INSERT INTO lg_events(session_id,at,author_id,author_name,text,score,action,reasons_json,applied,error)"
-                          " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                          (sid, sec.iso(m.at), m.author_id, m.author_name, m.text[:500], d.score, d.action,
-                           self.dumps(d.reasons), applied, error))
-            out.append({"message_id": m.message_id, "author_id": m.author_id, "action": d.action, "score": d.score,
+                with self.db.tx() as tx:
+                    event_id = tx.execute("INSERT INTO lg_events(session_id,at,author_id,author_name,text,score,action,reasons_json,applied,error)"
+                                          " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                          (sid, sec.iso(m.at), m.author_id, m.author_name, m.text[:500], d.score, d.action,
+                                           self.dumps(d.reasons), applied, error)).lastrowid
+            # The chat as it scrolls by, with what Live Guard did to each message.
+            self.db.x("INSERT INTO lg_chat(session_id,at,author_id,author_name,text,action,event_id) VALUES (?,?,?,?,?,?,?)",
+                      (sid, sec.iso(m.at), m.author_id, m.author_name, m.text[:500], d.action, event_id))
+            out.append({"message_id": m.message_id, "author_id": m.author_id, "author_name": m.author_name, "event_id": event_id,
+                        "action": d.action, "score": d.score,
                         "reasons": d.reasons, "duration_s": d.duration_s,
                         # For callers that act themselves (the agent on TikTok/Instagram):
                         "act": d.action != "none" and judge.policy.mode == "protect" and mod is None})
+        self.db.x("UPDATE lg_sessions SET checked=checked+? WHERE id=?", (len(messages), sid))
+        # Keep only the recent chat; flagged messages stay in lg_events for the record.
+        self.db.x("DELETE FROM lg_chat WHERE session_id=? AND id <= (SELECT id FROM lg_chat WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET 300)",
+                  (sid, sid))
         return out
+
+    def mark_applied(self, user_id: str, sid: str, event_id: int, error: Optional[str] = None) -> None:
+        """The agent reports it carried out an action on the platform (TikTok, Instagram…)."""
+        self._row(user_id, sid)
+        self.db.x("UPDATE lg_events SET applied=?, error=? WHERE id=? AND session_id=?", (0 if error else 1, error, event_id, sid))
 
     def set_mode(self, user_id: str, sid: str, mode: str) -> dict:
         if mode not in ("watch", "protect"):
@@ -443,9 +459,13 @@ class LiveGuardService:
         counts = {x["action"]: x["n"] for x in self.db.q("SELECT action, COUNT(*) n FROM lg_events WHERE session_id=? GROUP BY action", (sid,))}
         events = [{**dict(e), "reasons": self.loads(e["reasons_json"], [])} for e in
                   self.db.q("SELECT * FROM lg_events WHERE session_id=? ORDER BY id DESC LIMIT 100", (sid,))]
+        chat = [dict(c) for c in self.db.q(
+            "SELECT id, at, author_id, author_name, text, action, event_id FROM lg_chat WHERE session_id=? ORDER BY id DESC LIMIT 80", (sid,))][::-1]
+        counts.pop("none", None)
         return {"id": sid, "platform": r["platform"], "channel": r["channel"], "state": r["state"],
                 "policy": self.loads(r["policy_json"]), "started_at": r["started_at"], "stopped_at": r["stopped_at"],
-                "counts": counts, "connected": sid in self.moderators, "events": events}
+                "counts": counts, "checked": r["checked"], "connected": sid in self.moderators or sid in self.watchers,
+                "watching": sid in self.watchers, "events": events, "chat": chat}
 
     def sessions(self, user_id: str) -> list[dict]:
         return [{k: r[k] for k in ("id", "platform", "channel", "state", "started_at", "stopped_at")}

@@ -150,6 +150,10 @@ RULES: list[Rule] = [
     Rule("advisor_testimonial", "investment_scam", "strong", "Testimonial for a \"financial advisor\" or crypto mentor",
          R(r"\b(thanks to|working with|recommend|introduced (me )?to|helped me)\b.{0,60}\b(financial advis[eo]r|broker|mentor|trader|account manager|expert)\b|"
            r"\b(mrs?|ms|miss|dr)\.?\s+[a-z]+\b.{0,60}\b(profit|returns?|invest\w*|trading|portfolio)\b"), kinds=SOCIAL | PRIVATE),
+    Rule("profit_testimonial", "investment_scam", "strong", "Brags about big trading or crypto profits (a pitch for a fake \"coach\" or platform)",
+         R(r"\b(i|we)\s+(just\s+)?(made|earned|received|withdrew|profited|got paid)\s+(over\s+)?\$\s?\d[\d,.]*\s*k?\b.{0,80}"
+           r"\b(trading|invest\w*|crypto|forex|bitcoin|btc|coach|mentor|platform|advis[eo]r|expert|account manager|signals?)\b"),
+         kinds=SOCIAL | PRIVATE),
     Rule("link_spam_template", "link_spam", "strong", "Link-bait template (\"finally it's here\", \"thank me later\", \"full video on my page\")",
          R(r"\b(finally it'?s here|it'?s finally here|i think you'?re looking for this|here is the (full|recommended) (video|clip)|"
            r"link to the clip|thank me later|full video is (up )?on my (page|profile|channel)|check out the full|here is the backup)\b"),

@@ -62,3 +62,7 @@
 {"kind": "sms", "platform": "sms", "label": "benign", "text": "Hey it's Mike from soccer, are we still on for practice tomorrow?", "sender_name": ""}
 {"kind": "sms", "platform": "sms", "label": "benign", "text": "Dinner tomorrow at 7? Mom's making lasagna", "sender_name": ""}
 {"kind": "sms", "platform": "sms", "label": "benign", "text": "Your Amazon order has shipped! Track at https://www.amazon.com/progress-tracker", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "scam", "text": "I made $8,400 this week with my trading coach, message me on WhatsApp", "sender_name": ""}
+{"kind": "comment", "platform": "instagram", "label": "scam", "text": "I just withdrew $12,000 from the crypto platform my mentor showed me, ask me how", "sender_name": ""}
+{"kind": "live", "platform": "tiktok", "label": "legit", "text": "I made $40 this week selling my crafts at the market, so proud", "sender_name": ""}
+{"kind": "comment", "platform": "x", "label": "legit", "text": "Honestly I lost $300 trading crypto last year, never again", "sender_name": ""}

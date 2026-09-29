@@ -130,7 +130,14 @@ BLOCK: dict[str, list[dict]] = {
 LIVE_ACTIONS: dict[tuple[str, str], list[dict]] = {
     ("tiktok", "ban"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "text": "Block"}, {"op": "click", "text": "Block"}],
     ("tiktok", "timeout"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "text": "Mute"}, {"op": "click", "text": "{mute_label}"}],
-    ("instagram", "ban"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "text": "Block"}],
+    ("instagram", "ban"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "any": ["Remove", "Block"]},
+                           {"op": "click", "any": ["Remove", "Block"], "optional": True}],
+    ("facebook", "ban"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "any": ["Remove from live video", "Block", "Remove"]},
+                          {"op": "click", "any": ["Remove", "Block", "Confirm"], "optional": True}],
+    ("kick", "ban"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "any": ["Ban user", "Ban"]},
+                      {"op": "click", "any": ["Ban", "Confirm"], "optional": True}],
+    ("kick", "timeout"): [{"op": "click", "text": "{author_name}"}, {"op": "click", "any": ["Timeout", "Time out"]},
+                          {"op": "click", "any": ["5 minutes", "Confirm"], "optional": True}],
 }
 
 # A quoted label; apostrophes inside words ("It's spam") don't end the quote.

@@ -92,7 +92,8 @@ Live Guard moderates a stream's chat in real time: delete, then timeout, then ba
 - **Rails:** it starts in Watch mode, caps actions per minute, and has undo.
 - **Platforms:**
   - **Twitch and YouTube Live:** through their official moderation APIs.
-  - **TikTok, Instagram and Facebook Live:** through a moderator account you add to your live, run by the agent.
+  - **TikTok, Instagram, Facebook and Kick:** Bot Purge moderates like a human mod. You add your Bot Purge moderator account to your live and press **Start moderating**. The desktop app opens the live in its own window, reads each chat message as it's posted, and removes scammers, spammers and bots right there in the chat. You can watch it or take over at any time. If a platform changes its chat layout, it asks you to click one chat message and learns where the chat is.
+- **The chat as a moderator sees it:** every message streams in with a running count ("1,284 messages checked · 12 removed"). Removed ones are struck through, with the reason and an **Undo & trust** button. With no live on, **Play sample chat** shows it working.
 
 ### Remove, block or report: your choice
 

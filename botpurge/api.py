@@ -829,6 +829,64 @@ def create_app(db_path: Optional[str] = None, purge_enforcer=None, x_http=None, 
     def liveguard_mode(sid: str, body: ModeIn, uid: str = Depends(user)):
         return svc.liveguard.set_mode(uid, sid, body.mode)
 
+    class WatchIn(BaseModel):
+        url: str = Field(max_length=500)
+
+    WATCH_HOSTS = {"tiktok": "tiktok.com", "instagram": "instagram.com", "facebook": "facebook.com", "kick": "kick.com"}
+
+    @app.post("/api/liveguard/sessions/{sid}/watch")
+    def liveguard_watch(sid: str, body: WatchIn, uid: str = Depends(user)):
+        """Desktop app: the agent opens the live as the moderator account and moderates its chat."""
+        svc.plans.require(uid, "liveguard")
+        x = svc.liveguard.session(uid, sid)
+        host = WATCH_HOSTS.get(x["platform"])
+        if not host:
+            raise HTTPException(400, "Twitch and YouTube chats are read through their official APIs; connect your moderator account instead")
+        if host not in body.url.lower() or not body.url.lower().startswith("https://"):
+            raise HTTPException(400, f"Paste the link to your live on {host}")
+        if x["state"] != "running":
+            raise HTTPException(400, "Start Live Guard first")
+        if sid in svc.liveguard.watchers:
+            return {"watching": True}
+        if not svc.agent.has_consent(uid, x["platform"]):
+            raise PermissionError(f"Accept the agent notice for {x['platform']} first")
+        try:
+            import playwright  # noqa: F401
+        except ImportError:
+            raise HTTPException(503, "Live Guard on TikTok, Instagram, Facebook and Kick runs in the Bot Purge desktop app")
+
+        def run():
+            from .agent.cockpit import Cockpit, Stopped
+            from .agent.livewatch import watch
+            from .agent.runner import Executor, Pacing
+
+            try:
+                pw, ctx = _agent_browser()
+            except Exception:
+                svc.liveguard.watchers.discard(sid)
+                return
+            try:
+                cockpit = Cockpit(ctx).install()
+                page = ctx.pages[0] if ctx.pages else ctx.new_page()
+                page.goto(body.url, wait_until="domcontentloaded")
+                watch(svc.liveguard, uid, sid, page, x["platform"], cockpit=cockpit,
+                      executor=Executor(Pacing(0.3, 0.8, 0, 0), timeout_ms=4000, cockpit=cockpit))
+            except Stopped:
+                svc.liveguard.stop(uid, sid)
+            except Exception:
+                pass
+            finally:
+                svc.liveguard.watchers.discard(sid)
+                try:
+                    ctx.close()
+                    pw.stop()
+                except Exception:
+                    pass
+
+        svc.liveguard.watchers.add(sid)
+        threading.Thread(target=run, daemon=True, name=f"livewatch-{sid}").start()
+        return {"watching": True, "note": "A Bot Purge window opened on your live. Keep it open while you stream."}
+
     @app.post("/api/liveguard/sessions/{sid}/stop")
     def liveguard_stop(sid: str, uid: str = Depends(user)):
         return svc.liveguard.stop(uid, sid)

@@ -3,6 +3,15 @@
 The website, phone app, store (Stripe) and Purge Console all run from one small server.
 IONOS **Web Hosting** plans only run PHP, so Bot Purge needs an **IONOS VPS** (VPS Linux XS or S is plenty).
 
+## Already have a server with other sites on it? (Recommended for 74.208.19.30)
+Bot Purge can share it without touching your other sites. Its app listens only on the server itself, and your existing Caddy
+forwards www.botpurge.online to it:
+```bash
+curl -fsSL https://raw.githubusercontent.com/davidsbianchi1984/botpurge/main/deploy/add-to-existing-server.sh | bash
+```
+The script backs up your Caddyfile before adding the Bot Purge site, and undoes the change if Caddy rejects it. Then do steps 2, 4, 5 and 6 below.
+Automatic updates (step 5) work the same way.
+
 ## 1. Get the server (IONOS)
 1. In IONOS: **Servers & Cloud → VPS → Linux**. Pick **Ubuntu 24.04**.
 2. Note the server's **IP address** and **root password** (IONOS shows them after setup).
