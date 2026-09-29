@@ -13,3 +13,4 @@ dist/
 .DS_Store
 research_notes/
 reports/
+deploy/docker-compose.caddy-net.yml
